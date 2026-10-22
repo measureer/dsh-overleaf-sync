@@ -208,7 +208,38 @@ describe('transport index exports', () => {
     assert.equal(typeof transport.loadCredential, 'function')
     assert.equal(typeof transport.saveCredential, 'function')
     assert.equal(typeof transport.clearCredential, 'function')
+    assert.equal(typeof transport.socketEndpoint, 'function')
     assert.equal(typeof transport.linesToText, 'function')
     assert.equal(typeof transport.textToLines, 'function')
+  })
+})
+
+describe('socketEndpoint (self-hosted deployments)', () => {
+  it('keeps the default endpoint for official / root-deployed instances', () => {
+    assert.deepEqual(transport.socketEndpoint('https://www.overleaf.com/'), {
+      origin: 'https://www.overleaf.com',
+    })
+    assert.deepEqual(transport.socketEndpoint('http://overleaf.lan:8080/'), {
+      origin: 'http://overleaf.lan:8080',
+    })
+  })
+
+  it('moves a sub-path into the socket.io path', () => {
+    assert.deepEqual(transport.socketEndpoint('https://host/overleaf/'), {
+      origin: 'https://host',
+      path: '/overleaf/socket.io/',
+    })
+    // `normalizeBaseUrl` always adds the trailing slash, but the helper is total.
+    assert.deepEqual(transport.socketEndpoint('https://host/overleaf'), {
+      origin: 'https://host',
+      path: '/overleaf/socket.io/',
+    })
+  })
+
+  it('keeps HTTP requests under the same sub-path', () => {
+    const base = transport.normalizeBaseUrl('https://host/overleaf')
+    assert.equal(base, 'https://host/overleaf/')
+    assert.equal(new URL('project', base).href, 'https://host/overleaf/project')
+    assert.equal(new URL('user/projects', base).href, 'https://host/overleaf/user/projects')
   })
 })

@@ -345,6 +345,30 @@ export interface SocketConnectOptions {
   debug?: boolean
 }
 
+/** Where socket.io lives for a given Overleaf base URL. */
+export interface SocketEndpoint {
+  /** Scheme + host (+ port); sub-path deployments keep the path in `path`. */
+  origin: string
+  /** Non-default socket.io endpoint (`/overleaf/socket.io/`); absent on the default path. */
+  path?: string
+}
+
+/**
+ * Resolve the socket.io endpoint for a base URL.
+ *
+ * Official and root-deployed instances use `/socket.io/`; a self-hosted instance
+ * mounted under a sub-path (`https://host/overleaf/`) serves it from
+ * `<basePath>/socket.io/`. HTTP requests use the full base URL instead — see
+ * `normalizeBaseUrl` in `./credentials.ts`.
+ */
+export function socketEndpoint(baseUrl: string): SocketEndpoint {
+  const parsed = new URL(baseUrl)
+  const basePath = parsed.pathname.replace(/\/+$/, '')
+  return basePath.length === 0
+    ? { origin: parsed.origin }
+    : { origin: parsed.origin, path: `${basePath}/socket.io/` }
+}
+
 /**
  * socket.io transport for one Overleaf project.
  *
@@ -361,6 +385,8 @@ export class OverleafSocket implements OverleafTransport {
 
   private readonly credential: Credential
   private readonly origin: string
+  /** socket.io endpoint path; non-default only for servers deployed under a sub-path. */
+  private readonly socketPath?: string
   private readonly debug: boolean
   private readonly sourceId: string
   private readonly abortController = new AbortController()
@@ -396,9 +422,9 @@ export class OverleafSocket implements OverleafTransport {
   }
 
   private constructor(credential: Credential, projectId: string, debug: boolean) {
-    let origin: string
+    let endpoint: SocketEndpoint
     try {
-      origin = new URL(credential.baseUrl).origin
+      endpoint = socketEndpoint(credential.baseUrl)
     } catch {
       throw new OverleafSyncError(
         'E_CONFIG',
@@ -406,9 +432,12 @@ export class OverleafSocket implements OverleafTransport {
         'pass a full URL such as https://www.overleaf.com',
       )
     }
+    const origin = endpoint.origin
+    const socketPath = endpoint.path
     this.credential = credential
     this.projectId = projectId
     this.origin = origin
+    if (socketPath !== undefined) this.socketPath = socketPath
     this.debug = debug
     this.sourceId = `dsh-overleaf-sync-${randomUUID().slice(0, 8)}`
   }
@@ -585,6 +614,7 @@ export class OverleafSocket implements OverleafTransport {
       'reconnection limit': 16_000,
       'max reconnection attempts': 10,
       'force new connection': true,
+      ...(this.socketPath === undefined ? {} : { path: this.socketPath }),
       extraHeaders: {
         Origin: this.origin,
         Cookie: this.credential.cookie,

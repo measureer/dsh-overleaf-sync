@@ -14,6 +14,7 @@ export const createTransport: TransportFactory = async (
 }
 
 export { OverleafHttp } from './http.js'
-export { OverleafSocket } from './socket.js'
+export { OverleafSocket, socketEndpoint } from './socket.js'
+export type { SocketEndpoint } from './socket.js'
 export * from './credentials.js'
 export * from './packed.js'

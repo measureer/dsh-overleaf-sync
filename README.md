@@ -52,6 +52,15 @@ dsh plugin --profile desktop add link:C:/code/dsh-overleaf-sync
 | 冲突 | **永不静默覆盖**：本地保留，远端写 `foo.remote-<ts>.tex` | `defaultStrategy` |
 | 后台 watch | **关**（未实现，M3） | `watch.autoStart` |
 
+## 自建服务器（Overleaf CE / Server Pro）
+
+`baseUrl` 默认 `https://www.overleaf.com`，可在设置页「高级」区块或 `overleaf_login` 的 `baseUrl` 参数里改成任意实例：
+
+- **Cookie 原样透传**：不解析 cookie 名，`overleaf_session2`（官方/新版 CE）与 `sharelatex.sid`（老版 CE）都能用；CSRF 从页面 `ol-csrfToken` meta 读取。
+- **协议回退**：socket.io 握手先试 `joinProject` v1，被拒后自动切 v2（`?projectId=…`）。
+- **子路径部署**：`https://host/overleaf/` 这类实例，HTTP 请求跟随 baseUrl 子路径，socket.io 自动用 `/overleaf/socket.io/`。
+- **已知限制**：客户端是 socket.io-client v4（Engine.IO v4），老到只支持 socket.io 2.x 的实例连不上；登录仍需从浏览器复制 Cookie（不实现账号密码/SSO 登录）。
+
 ## 状态与安全
 
 - 凭据、`link.json`、`state.json`、冲突快照、审计流水都在 `~/.dsh/overleaf-sync/`，**不写进项目目录**（避免被同步上云）。
