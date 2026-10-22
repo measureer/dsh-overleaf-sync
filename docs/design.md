@@ -983,7 +983,7 @@ ctx.slots.inject('settings.section', () => ctx.slots.register({
 ```
 ┌ Overleaf 同步 ─────────────────────────────────────────┐
 │ ① 账号                                                 │
-│   ● 已登录 as you@example.com   [重新登录] [退出]       │
+│   ● 已保存凭据 · hint · 10-23 12:30  [重新登录] [退出]  │
 │   Cookie  [••••••••（已设置）]  CSRF [••••]  [登录]     │
 │ ② 项目与目录                                            │
 │   项目 [arXiv 模板 ▾] [刷新]    本地目录 [~/Overleaf/… ]│
@@ -1025,7 +1025,7 @@ ctx.slots.inject('settings.section', () => ctx.slots.register({
 
 - Cookie/CSRF **永不写进 profile config，也永不回传浏览器**。`settings.describe({ redactSecrets: true })` 对机密字段只给「已设置」标记（`dsh-client-ui-settings/README.md:49`），设置页据此显示 `••••`。
 - 输入框是**写入型**：提交成功后清空，不保留在组件 state 里。
-- 登录成功后 Host 返回 `email`，设置页显示「已登录 as …」；`E_AUTH_EXPIRED` 时徽章变红并提供「重新登录」。
+- 登录成功后 Host 只保存凭据并返回 `{ baseUrl, hint? }`（Overleaf 的 `whoami` 不保证给邮箱，**不编造 email**）；设置页显示「已保存凭据 · hint · 保存时间」；`E_AUTH_EXPIRED` 时徽章变红并提供「重新登录」。
 - 与工具一致：`overleaf_login` 的 schema 里也没有密码字段——GUI 同样不提供密码登录。
 
 #### 14.3.6 保存语义
@@ -1117,7 +1117,7 @@ return () => { stopBody?.(); stopType?.() }   // 两段成对回滚
 | 方法 | 请求 | 返回 | 错误码 |
 | --- | --- | --- | --- |
 | `status` | `{}` | `StatusSummary` | — |
-| `login` | `{ cookie, csrf? }` | `{ ok, email? }` | `E_AUTH_INVALID` |
+| `login` | `{ cookie, csrf? }` | `{ ok, baseUrl, hint? }` | `E_AUTH_INVALID` |
 | `logout` | `{}` | `{ ok }` | — |
 | `projects` | `{ refresh? }` | `ProjectListEntry[]` | `E_AUTH_EXPIRED` |
 | `link` | `{ projectId, localRoot? }` | `LinkRecord` | `E_LOCAL_DIR_INVALID`、`E_PROJECT_NOT_FOUND` |
@@ -1304,7 +1304,8 @@ M0 的产出里还应固化三件实现层面的“钉死项”：`HarnessError`
 | §10 工具 | `src/tools/index.ts`（`createOverleafTools`）+ `src/index.ts` 注册 | ✅ status/login/logout/projects/link/pull/push/diff |
 | §7.2 watch | — | ⏳ M3 |
 | §10 `overleaf_resolve` | — | ⏳ M3 |
-| §14 GUI：设置页 / 侧边栏 | — | ⏳ M4a / M4b（契约见 [client-ui-notes.md](client-ui-notes.md)） |
+| §14 GUI：设置页 | `src/server/*` + `src/client/*` + `locale/*` | ✅ M4a（Host API + 设置页，重启 DSH 后可见；实现说明见 [m4a-api-contract.md](m4a-api-contract.md)） |
+| §14 GUI：侧边栏 | — | ⏳ M4b（原生两段式注册 + SSE，设计见 §14.4/14.5） |
 
 测试：`test/{core,transport,service,plugin}/` 共 **92 个用例**（`node --test 'test/**/*.test.mjs'`，需先 `tsc` 构建）。
 

@@ -75,9 +75,10 @@ export interface SettingsField {
   key: string
   type: 'string' | 'boolean' | 'number' | 'enum'
   value: unknown
-  /** Optional presentation hints: absent in the published contract, honored when present. */
+  /** Optional presentation hints sent by the host (hit `settings.describe`), honored when present. */
   label?: string
   default?: unknown
+  group?: 'strategy' | 'advanced'
   options?: string[]
   min?: number
   max?: number
@@ -151,7 +152,6 @@ export async function post<T>(name: string, payload: unknown = {}, signal?: Abor
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload ?? {}),
-      credentials: 'same-origin',
       signal,
     })
   } catch (error) {

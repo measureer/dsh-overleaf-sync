@@ -108,7 +108,16 @@ Host 提供的这些字段只是省一次映射。
 - **绑定**：`link` 前 Host 侧必须 `realpath` + 越界校验；目录已存在且非空且不是本项目目录时返回 `E_LOCAL_DIR_CONFIRM_REQUIRED`（客户端据此弹确认，再带 `force: true` 重发）。
 - **写远端**：`push` 的 `dryRun` 默认 `true`；`dryRun: false` 时若 `confirmRemoteWrite` 为真，仍需客户端二次确认（由 `POST /overleaf/api/push` 的 `confirm: true` 显式表达），否则 `E_CONFIRM_REQUIRED`。
 - **幂等**：`status`/`projects`/`conflicts`/`journal` 无副作用；其余动作不做隐式重试。
-- **并发**：同一时刻只允许一个 `pull`/`push`（Host 侧互斥锁），冲突时 `E_BUSY`（`409`）。
+- **并发**：同一时刻只允许一个 `pull`/`push`（Host 侧互斥锁，按 `projectId` 分桶），冲突时 `E_BUSY`（`409`）。
+- **非信封响应**：DSH Web 层自己的 `401`/`404`/HTML 页面不带信封。客户端必须把「不是 `{ok:...}` 的响应」统一映射成 `E_NO_ROUTE`（提示「Host 侧未就绪」，并给重试），不能当成业务错误或直接白屏。
+- **两种 409 靠 `code` 区分**：`E_SETTINGS_CONFLICT`（配置 revision 过期）与 `E_BUSY`（同步操作互斥）；UI 提示与重试动作完全不同。
+- **「用默认目录」**：`validate-path` 的 `path` 必填，所以留空时客户端应先用 `localRootPattern` 展开一个预览值（把 `{project}` 换成项目名）送去校验；真正 `link` 时才省略 `localRoot`，由 Host 决定最终路径（含去重后缀）。
+
+### 3.1 已登录用户的展示
+
+`status.credential` 只有 `hint`（用户自填标签）与 `savedAt`，**没有 email**：Overleaf 的 `whoami`
+响应并不稳定地返回邮箱，我们不在登录时编造这个字段。设置页显示「已保存凭据 · <hint> · <savedAt>」即可，
+`E_AUTH_EXPIRED` 时徽章变红并提供「重新登录」。
 
 ## 4. 客户端要求
 

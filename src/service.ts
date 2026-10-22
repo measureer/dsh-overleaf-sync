@@ -163,10 +163,30 @@ export interface ServiceDeps {
 }
 
 export class OverleafSyncService {
+  /** Project ids with a pull/push in flight — a second call gets `E_BUSY`. */
+  private readonly busy = new Set<string>()
+
   constructor(
     readonly config: Config,
     readonly deps: ServiceDeps = {},
   ) {}
+
+  /** Serialize the two operations that touch both sides of the sync. */
+  private async exclusive<T>(projectId: string, run: () => Promise<T>): Promise<T> {
+    if (this.busy.has(projectId)) {
+      throw new OverleafSyncError(
+        'E_BUSY',
+        `another pull/push is already running for project "${projectId}"`,
+        'wait for it to finish, then retry',
+      )
+    }
+    this.busy.add(projectId)
+    try {
+      return await run()
+    } finally {
+      this.busy.delete(projectId)
+    }
+  }
 
   // ---------------------------------------------------------------- credentials
 
@@ -338,6 +358,11 @@ export class OverleafSyncService {
   // ----------------------------------------------------------------------- pull
 
   async pull(input: PullInput, ctx: ServiceContext): Promise<PullSummary> {
+    const projectId = input.projectId ?? (await this.readLink()).projectId
+    return this.exclusive(projectId, () => this.pullUnlocked(input, ctx))
+  }
+
+  private async pullUnlocked(input: PullInput, ctx: ServiceContext): Promise<PullSummary> {
     const link = await this.readLink(input.projectId)
     const credential = await this.requireCredential()
     const warnings: string[] = []
@@ -446,6 +471,11 @@ export class OverleafSyncService {
    * whose remote text moved since the baseline is never overwritten silently.
    */
   async push(input: PushInput, ctx: ServiceContext): Promise<PushSummary> {
+    const projectId = input.projectId ?? (await this.readLink()).projectId
+    return this.exclusive(projectId, () => this.pushUnlocked(input, ctx))
+  }
+
+  private async pushUnlocked(input: PushInput, ctx: ServiceContext): Promise<PushSummary> {
     const link = await this.readLink(input.projectId)
     const credential = await this.requireCredential()
     const warnings: string[] = []
