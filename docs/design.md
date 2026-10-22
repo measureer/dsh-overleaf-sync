@@ -1014,22 +1014,25 @@ M0 的产出里还应固化三件实现层面的"钉死项"（详见 [插件 API
 | 设计章节 | 落地文件 | 状态 |
 | --- | --- | --- |
 | §3.2 入口 | `src/index.ts` | ✅ `name` / `inject` / `Config` / `apply`，`ctx.effect` 注册 8 个工具 |
-| §3.3 打包 | `package.json`（`dsh.bundle.patch`）、`cordis.patch.yml`、`tsconfig.json` | ✅ `tsc` 输出 `lib/`（ESM） |
-| §5 本地目录 | `src/core/fsUtil.ts`、`src/service.ts`（`resolveLocalRoot`） | ✅ `~/Overleaf/<项目名>`，含越界校验 |
+| §9 配置 | `src/config.ts`、`cordis.patch.yml` | ✅ 12 个配置键（含 `volatile()` 隐藏项） |
+| §3.3 打包 | `package.json`（`dsh.bundle.patch`）、`tsconfig.json` | ✅ `tsc` 输出 `lib/`（ESM） |
+| §5 本地目录 | `src/core/paths.ts`、`src/core/fsUtil.ts`、`src/service.ts`（`resolveLocalRoot`） | ✅ `~/Overleaf/<项目名>`，含越界校验 |
 | §5.8 git | `src/core/gitInit.ts` | ✅ own/parent 判定、首次提交带 `-c user.name/email` 兜底 |
 | §6.1 transport | `src/transport/{socket,http,packed,credentials,index}.ts` | ✅ REST + Socket.IO + OT 编码 |
-| §6.2 docSession | `src/core/docSession.ts` | ✅ 记录 baseVersion / baselineText |
+| §6.2 docSession | 并入 `src/service.ts`（每文档 baseVersion/baseline 随 `state.json` 持久化） | ✅ 等价实现，未单独建类 |
 | §6.3 OT diff | `src/core/otDiff.ts` | ✅ `diffToOps` / `applyOps` / `transformOps` |
 | §6.5 状态 | `src/core/stateStore.ts` | ✅ `~/.dsh/overleaf-sync/projects/<id>/state.json` |
 | §6.6 忽略 | `src/core/ignore.ts` | ✅ `.gitignore` / `.overleaf-syncignore` 语义 |
+| §14 可观测性 | `src/core/journal.ts` | ✅ 审计流水（凭据脱敏） |
 | §7.3 pull | `src/service.ts` `pull()` | ✅ 全量下载 + baseline + 自动 git init |
 | §7.3 push | `src/service.ts` `push()` | ✅ 默认 dry-run，逐文档 OT 提交，不覆盖冲突 |
 | §7.4 冲突 | `src/service.ts` `pull()` | ✅ 远端写 `*.remote-<ts>.<ext>`，本地保留 |
-| §9 配置 | `Config` + `cordis.patch.yml` | ✅ 12 个配置键，含 `volatile()` 隐藏 |
-| §10 工具 | `src/tools/*.ts` | ✅ status/login/logout/projects/link/pull/push/diff |
+| §10 工具 | `src/tools/index.ts`（`createOverleafTools`）+ `src/index.ts` 注册 | ✅ status/login/logout/projects/link/pull/push/diff |
 | §7.2 watch | — | ⏳ M3 |
 | §10 `overleaf_resolve` | — | ⏳ M3 |
 | §13 GUI 卡片 / 审批钩子 | — | ⏳ M4 |
+
+测试：`test/{core,transport,service,plugin}/` 共 **92 个用例**（`node --test 'test/**/*.test.mjs'`，需先 `tsc` 构建）。
 
 > 协议事实以 `src/transport/` 的实测实现为准：与附录 C 的旧描述冲突处，一律以本附录上一节（§2.2 已同步修正）为准。
 
