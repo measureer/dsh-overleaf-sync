@@ -396,6 +396,8 @@ export function AdvancedBlock(props: {
   draft: Record<string, DraftValue>
   disabled: boolean
   open: boolean
+  /** Why there are no fields (Host API unreachable); shown instead of the empty state. */
+  failure?: string
   onToggle: () => void
   onChange: (key: string, next: DraftValue) => void
 }): ReactNode {
@@ -418,7 +420,7 @@ export function AdvancedBlock(props: {
     >
       {props.open ? (
         <>
-          {rendered.length === 0 ? <Hint>{t('noFields')}</Hint> : null}
+          {rendered.length === 0 ? <Hint>{props.failure ?? t('noFields')}</Hint> : null}
           <FieldList fields={rendered} draft={props.draft} disabled={props.disabled} t={t} onChange={props.onChange} />
         </>
       ) : null}

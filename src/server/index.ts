@@ -3,12 +3,24 @@
  *
  * `webServer` and `settings` are optional services — a headless host simply
  * never has them, and the plugin keeps working through tools only.
+ *
+ * Registration goes through two paths on purpose:
+ *
+ * 1. when `ctx.webServer` is already resolved at `apply()` time it is used
+ *    directly (the shape every official plugin uses);
+ * 2. otherwise a late `ctx.inject(['webServer'])` scope registers the routes as
+ *    soon as the service appears.
+ *
+ * Both paths write to the diagnostics file, because "the page says the Host
+ * half is not ready" and "registration silently failed" look identical from
+ * the browser.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 
 import type { Config } from '../config.js'
 import type { OverleafSyncService } from '../service.js'
+import { describeError, recordDiagnostic } from './diagnostics.js'
 import { createOverleafRoutes, type WebRoute } from './routes.js'
 import { SettingsBridge, type SettingsServiceLike } from './settingsBridge.js'
 
@@ -31,25 +43,86 @@ export interface WebServerLike {
  */
 export function registerOverleafApi(ctx: Context, deps: ServerDeps): () => void {
   const disposers: Array<() => void> = []
+  let registered = false
 
-  ctx.inject(['webServer'], (sctx) => {
-    sctx.effect(() => {
-      const webServer = (sctx as unknown as { webServer?: WebServerLike }).webServer
-      if (webServer === undefined) return () => {}
-      const settings = new SettingsBridge(readSettings(sctx), {
+  const install = (webServer: WebServerLike | undefined, how: 'static' | 'injected' | 'polled'): void => {
+    if (webServer === undefined) {
+      recordDiagnostic('webServer-missing', { how })
+      return
+    }
+    if (registered) return
+    try {
+      const settings = new SettingsBridge(readSettings(ctx), {
         config: deps.config,
         ...(deps.namespace === undefined ? {} : { namespace: deps.namespace }),
       })
       const routes = createOverleafRoutes({ ...deps, settings })
       for (const route of routes) disposers.push(webServer.register(route))
+      registered = true
+      recordDiagnostic('routes-registered', { how, count: routes.length })
+    } catch (error) {
+      recordDiagnostic('routes-register-failed', { how, error: describeError(error) })
+    }
+  }
+
+  const direct = (ctx as unknown as { webServer?: WebServerLike }).webServer
+  recordDiagnostic('register-overleaf-api', { webServerAtApply: direct !== undefined })
+  if (direct !== undefined) {
+    ctx.effect(() => {
+      install(direct, 'static')
       return () => {
         for (const dispose of disposers.splice(0).reverse()) dispose()
+        registered = false
       }
     })
-  })
+  } else {
+    ctx.inject(['webServer'], (sctx) => {
+      recordDiagnostic('webServer-inject-fired', {})
+      sctx.effect(() => {
+        install((sctx as unknown as { webServer?: WebServerLike }).webServer, 'injected')
+        return () => {
+          for (const dispose of disposers.splice(0).reverse()) dispose()
+          registered = false
+        }
+      })
+    })
+  }
+
+  // Belt and braces: some compositions publish `webServer` from an async
+  // bootstrap without ever waking the inject scope above. Watch the service
+  // registry for a few seconds and register as soon as it shows up.
+  if (!registered) {
+    const timer = setInterval(() => {
+      if (registered) {
+        clearInterval(timer)
+        return
+      }
+      const late = readWebServer(ctx)
+      if (late !== undefined) {
+        clearInterval(timer)
+        install(late, 'polled')
+      }
+    }, 250)
+    timer.unref?.()
+    if (typeof ctx.effect === 'function') ctx.effect(() => () => clearInterval(timer))
+  }
 
   return () => {
     for (const dispose of disposers.splice(0).reverse()) dispose()
+    registered = false
+  }
+}
+
+/** `ctx.webServer` or the same service reached through `ctx.get`. */
+function readWebServer(ctx: Context): WebServerLike | undefined {
+  const own = (ctx as unknown as { webServer?: WebServerLike }).webServer
+  if (own !== undefined) return own
+  const getter = (ctx as unknown as { get?: (name: string) => unknown }).get
+  if (typeof getter !== 'function') return undefined
+  try {
+    return getter.call(ctx, 'webServer') as WebServerLike | undefined
+  } catch {
+    return undefined
   }
 }
 

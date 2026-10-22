@@ -407,6 +407,7 @@ export function OverleafSettingsSection(props: PanelProps): ReactNode {
         <AdvancedBlock
           t={t}
           fields={advancedFields}
+          failure={loadFailure === null ? undefined : describeFailure(loadFailure)}
           draft={draft}
           disabled={readOnly}
           open={advancedOpen}
