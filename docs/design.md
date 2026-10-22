@@ -193,7 +193,7 @@ dsh-overleaf-sync/
 ├── cordis.patch.yml        # bundle 默认配置（挂载 id + config 默认值）
 ├── lib/
 │   ├── index.js            # 服务端入口：export const name / export function apply(ctx)
-│   ├── client.js           # 可选：GUI 侧状态卡片（M4；需构建或写成 __ModuleLoader__ 免构建形态）
+│   ├── client.js           # 浏览器半侧产物（__ModuleLoader__ 形态，见 §14.2；M4）
 │   └── skills/*.md         # 可选：随插件分发的操作说明
 ├── test/                   # 单测 + Mock Overleaf 服务器
 └── docs/
@@ -235,7 +235,7 @@ patch 语义（`cordis-plugin-include` / `dsh-app-boot`）：
   "main": "lib/index.js",
   "exports": {
     ".": { "default": "./lib/index.js" },
-    "./client": { "default": "./lib/client.js" },   // M4 客户端半
+    "./client": { "default": "./lib/client.js" },   // 浏览器半侧，§14.2
     "./package.json": "./package.json"
   },
   "files": ["lib", "cordis.patch.yml", "README.md"],
@@ -246,7 +246,8 @@ patch 语义（`cordis-plugin-include` / `dsh-app-boot`）：
   },
   "engines": { "dsh": ">=0.2.0-0 <0.3.0-0" },
   "dependencies": { "ws": "^8.18.0" },
-  "peerDependencies": { "@deepseek-ai/cordis": "~4.0.5" }
+  "peerDependencies": { "@deepseek-ai/cordis": "~4.0.5" },
+  // M4 客户端半侧再加：react/react-dom ^18.2、@deepseek-ai/dsh-client-ui-slots、-ui-primitives（peer，避免双 React）
 }
 ```
 
@@ -329,7 +330,7 @@ src/
 
 ### 5.1 为什么不走 Git，而走实时协作通道
 
-沿用参考实现的判断：Git 桥接需要付费、手动、且对 `.tex` 的结构性改动容易产生大片 diff 冲突；实时通道是增量 OT，他人同时编辑也能自动合并（必要时才降级）。**代价**是要逆向一个非公开协议——所以本设计把协议收敛到 transport 层并配 Mock 服务器测试（§14）。
+沿用参考实现的判断：Git 桥接需要付费、手动、且对 `.tex` 的结构性改动容易产生大片 diff 冲突；实时通道是增量 OT，他人同时编辑也能自动合并（必要时才降级）。**代价**是要逆向一个非公开协议——所以本设计把协议收敛到 transport 层并配 Mock 服务器测试（§15）。
 
 > 注意区分两件事："**不用 Git 做同步通道**" ≠ "**不用 Git**"。本地副本拉下来后会自动 `git init` 并做一次 import 提交（§5.8），这是给用户自己的版本保险，不参与任何同步判定。
 
@@ -729,6 +730,8 @@ type MergeResult =
 
 配置变更：订阅配置变化事件后重建 SyncEngine（不重连 socket，仅更新 throttle/策略）；需要重启的项（baseUrl）给出明确提示。凭据变更一律重新握手。
 
+**GUI 写入路径**：设置页不是第二个真源，它通过 `settings.update(ns, patch, expectedRevision)` 写回**同一条** profile 条目（`ns` = profile 里的插件行 id，不是包名），字段↔控件映射见 §14.3.3。凭据、`link.json` 这两类**不**走配置通道（§6.9）。
+
 **patch 语义提醒**（DSH 0.2.x 实测）：`- id/name/config` 是**整段替换**，不深合并；所以上面这条用户级条目一旦写了 `config:`，就必须写全所有非默认字段，否则其余字段回落到插件 `cordis.patch.yml` 里的 bundle 默认值（这是设计上要保留的"默认值只有一处"原则）。另外：同一 profile 里空 patch 文件会导致启动失败，禁用该层要写 `[]`；未开启 HMR 时改配置需重启；只有标了 `.volatile()` 的字段能热生效。
 
 ---
@@ -768,7 +771,7 @@ type MergeResult =
 
 ### 9.3 回环抑制
 
-`remote → 磁盘` 写入时：登记 `inFlightWrites[path]=hash`，Watcher 回调命中则丢弃；写完后把 `state.syncedHash` 更新为同一 hash。这是最容易出 bug 的地方，单测必须覆盖（§14）。
+`remote → 磁盘` 写入时：登记 `inFlightWrites[path]=hash`，Watcher 回调命中则丢弃；写完后把 `state.syncedHash` 更新为同一 hash。这是最容易出 bug 的地方，单测必须覆盖（§15）。
 
 ---
 
@@ -882,6 +885,9 @@ sequenceDiagram
 | git init/commit 失败 | 非零退出码 | 不回滚已拉取文件，记录原因 | `E_GIT_INIT_FAILED`（警告） |
 | 目录内已有损坏 `.git` | `rev-parse` 失败 | 不删除、不猜测，提示用户处理 | `E_GIT_BROKEN` |
 | 项目被改名/迁移 | 树刷新 | 重新映射，保留 state（按 docId 匹配） | 日志 |
+| 粘贴的 cookie 无效（GUI/工具登录） | `whoami` 失败或 401 | 不写凭据，提示重新复制 | `E_AUTH_INVALID` |
+| 绑定目录不可用（不存在/只读/在项目外） | Host 侧路径校验 | 拒绝绑定，返回具体原因 | `E_LOCAL_DIR_INVALID` |
+| 设置页写回撞上并发修改 | `settings.update` 的 `expectedRevision` 不匹配 | 不覆盖，要求刷新后重试 | `E_SETTINGS_CONFLICT`（HTTP 409） |
 
 ---
 
@@ -890,13 +896,276 @@ sequenceDiagram
 - `journal.ndjson`：`{ts, event, docId?, path?, v?, ms, ok, code?}`，默认保留 7 天；
 - 环境变量：`DSH_OVERLEAF_DEBUG=1`（打印 socket 出入站，凭据脱敏）、`DSH_OVERLEAF_TRACE_OT=1`（打印 op）；
 - `overleaf_status` 输出：连接状态、项目、文件数、待同步、冲突、最近错误、watch 状态；
-- 可选 GUI 状态卡片（`lib/client.js`）：同步中/冲突数字与"打开冲突目录"入口（M4）。
+- GUI 呈现见 §14：设置页承载一次性配置，右侧边栏面板承载运行状态与 pull/push（M4a/M4b）。
 
 ---
 
-## 14. 测试策略
+## 14. GUI：设置页与侧边栏（M4）
 
-### 14.1 单元（无网络）
+> 本节依据 [客户端 UI 契约调研](client-ui-notes.md) 写成，其中每个 API 形状都有 `文件:行号` 证据；没有证据的能力一律标「无证据」，不设计依赖它的功能。
+
+### 14.1 分工：GUI 给人，工具给 Agent
+
+| 层 | 谁用 | 适合放什么 | 不适合放什么 |
+| --- | --- | --- | --- |
+| 工具（`overleaf_*`） | Agent / 脚本 | 批量、可编程、结构化返回值 | 危险动作的人为确认、路径浏览 |
+| 设置页（`settings.section`） | 人，一次性配置 | 登录态、项目绑定、目录、策略、git/watch 选项 | 高频状态刷新 |
+| 侧边栏面板（右侧 tab） | 人，运行时 | 当前状态、Pull/Push、冲突列表、日志尾巴 | 长表单、配置编辑 |
+| 工具卡片（`tool.call.toolview`） | 人，随对话 | 单次 pull/push 的摘要卡片 | 全局状态 |
+
+两条铁律：
+
+1. **客户端不持有权威状态**。浏览器半侧是纯沙箱（无 `fs`、无 Node、只能同源 `fetch`），且 HMR 重载会丢掉全部 React state（`client-ui-notes.md` §7.4）。因此面板上的一切数字都必须能在重挂载后从 Host 重新拉到；客户端只做渲染与触发。
+2. **危险动作必须人能看见**。Agent 调 `overleaf_push` 受 `confirmRemoteWrite` 约束；GUI 上的真写还要额外一次二次确认（§14.5）。
+
+### 14.2 客户端插件形态
+
+`package.json` 增加（与 Node 半侧并列，`client-ui-notes.md` §1、§6）：
+
+```jsonc
+{
+  "exports": {
+    ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" },
+    "./client": { "types": "./lib/types/client/index.d.ts", "default": "./lib/client.js" },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "platform": "web" }   // 入口只由 exports["./client"] 决定，没有 entry 字段
+  },
+  "files": ["lib", "cordis.patch.yml", "README.md"]
+}
+```
+
+- 入口形状与 Node 侧同构：`export const inject = [...]` + `export function apply(ctx)`；产物**不是 ESM**，而是 `window.__ModuleLoader__.load({ id: "dsh-overleaf-sync", factory: (require) => … })`（tsdown 生成）。
+- externals 固定 7 个：`react`、`react/jsx-runtime`、`react-dom`、`react-dom/client`、`cordis`、`@deepseek-ai/dsh-client-ui-slots`、`@deepseek-ai/dsh-client-ui-primitives`；这些只写 **peerDependencies**，避免双 React。
+- 首帧成本：client 入口保持极轻（只注册 slot 与拉一次 status），重组件（diff 视图、日志滚动）用 `require.async` 拆 chunk。
+- **必须自带 RenderBoundary**：框架不兜底渲染异常，一个 tab 崩掉会让整块侧边栏白屏（`client-ui-notes.md` §7.3）。做两级：ROOT（保住 shell）+ PER-TAB（只坏一个面板）。
+- `inject` 漏写即白屏级故障（Cordis 会抛 `cannot get property … without inject`），取服务一律走 inject，或在 `try/catch` 里降级。
+
+```ts
+// src/client/index.tsx
+export const inject = ['slots', 'sessions', 'locale', 'sidebarRightTabs', 'sidebarRight']
+export function apply(ctx: Context) {
+  ctx.effect(() => registerSettingsPage(ctx), 'overleaf: settings page')
+  ctx.effect(() => registerSidebarTab(ctx), 'overleaf: sidebar tab')
+}
+```
+
+### 14.3 设置页
+
+#### 14.3.1 为什么自绘，而不是让 Config 自动生成表单
+
+插件 Config 有 schemastery schema 时，DSH 会自动在 Settings→Plugins 生成表单——但本插件有三件事自动表单做不到：
+
+1. **凭据不能进配置**。profile 的 `config:` 是明文 YAML，cookie 写进去等于落盘泄密（与 §6.9 的凭据存储原则冲突）。设置页需要「输入即写凭据中心、之后只显示状态」的控件。
+2. **项目绑定是动作不是配置**。要从远端拉项目列表、要校验本地目录、要触发首次 pull。
+3. **状态管理要能点**。同步状态、冲突列表、立即 pull/push 都不属于配置项。
+
+因此采用 `configure({ auto: false }, ctx.fiber)` 关掉自动表单，全部自绘（`client-ui-notes.md` §2，`dsh-settings/README.md:39`）。**配置真源仍是 profile 里那条插件条目的 `config`**（§8），设置页只是它的可视化编辑器；headless 场景照旧改 YAML。
+
+#### 14.3.2 注册
+
+```ts
+ctx.slots.inject('settings.section', () => ctx.slots.register({
+  name: 'settings.section',
+  id: 'overleaf-sync',
+  order: 120,
+  label: () => t('overleaf.settings.nav'),   // “Overleaf 同步”
+  inject: () => ({ api, t }),
+}, OverleafSettingsSection))
+```
+
+组件签名用 `PropsRuntime<'settings.section'>`，并 `import type {} from '@deepseek-ai/dsh-client-ui-settings/client'` 合并 SlotMap（`client-ui-notes.md` §2）。
+
+#### 14.3.3 页面结构与字段映射
+
+```
+┌ Overleaf 同步 ─────────────────────────────────────────┐
+│ ① 账号                                                 │
+│   ● 已登录 as you@example.com   [重新登录] [退出]       │
+│   Cookie  [••••••••（已设置）]  CSRF [••••]  [登录]     │
+│ ② 项目与目录                                            │
+│   项目 [arXiv 模板 ▾] [刷新]    本地目录 [~/Overleaf/… ]│
+│                                   [校验路径] [用默认]   │
+│   绑定后：远端 42 个文件 · 上次拉取 2 小时前            │
+│ ③ 同步策略                                              │
+│   冲突处理  (•) 保留双方 ( ) 本地优先 ( ) 远端优先      │
+│   写远端前确认 [开]     拉取后建 git 仓库 [开]          │
+│ ④ 高级（折叠）                                          │
+│   baseUrl / watch.* / journal.keepDays / debug          │
+│                                            [保存修改]   │
+└────────────────────────────────────────────────────────┘
+```
+
+| 区块 | 控件 | 落点 | 键 / 接口 | 说明 |
+| --- | --- | --- | --- | --- |
+| ① 账号 | 状态徽章 | 只读 | `GET /overleaf/api/status` → `credential.email` | 过期显示 `E_AUTH_EXPIRED` 徽章 |
+| ① 账号 | Cookie / CSRF 输入 | 写凭据 | `POST /overleaf/api/login` | 提交后立即清空输入框，只回显「已设置」 |
+| ① 账号 | 退出 | 写凭据 | `POST /overleaf/api/logout` | 二次确认 |
+| ② 项目 | 项目下拉 | 只读远端 | `GET /overleaf/api/projects` | 名称 + 最后修改时间 |
+| ② 项目 | 本地目录 | 动作 | `POST /overleaf/api/link` | 输入 + 服务端校验（§14.3.4） |
+| ② 项目 | 默认目录 | 动作 | 同上，`localRoot` 省略 | 按 `localRootPattern` 展开 |
+| ③ 策略 | 单选 / 开关 | 配置 | `defaultStrategy`、`confirmRemoteWrite`、`git.autoInit`、`git.initialCommitMessage` | 与 `Config` 一一对应 |
+| ④ 高级 | 数值 / 文本 | 配置 | `baseUrl`、`watch.*`、`journal.*`、`debug` | 默认折叠，减少误改 |
+
+#### 14.3.4 目录选择：没有原生选择器，用「输入 + 服务端校验」
+
+调研未找到 DSH 客户端提供原生目录选择器的证据（`client-ui-notes.md` 附录）。因此 v1 的做法是：
+
+- 文本输入框（默认值由 `localRootPattern` 在 Host 侧展开，如 `~/Overleaf/<项目名>`）；
+- 「校验路径」按钮 → `POST /overleaf/api/validate-path`，Host 侧检查：可展开、非符号链接逃逸、可写、是否为空目录、是否已是其它项目的绑定目录；
+- 返回 `{ ok, resolved, problems[] }`，`resolved` 回填输入框（让用户看到最终绝对路径）；
+- 若路径已存在且有文件：显示「将覆盖 N 个文件」并要求勾选确认（避免误绑已有目录）。
+
+#### 14.3.5 凭据的特殊处理
+
+- Cookie/CSRF **永不写进 profile config，也永不回传浏览器**。`settings.describe({ redactSecrets: true })` 对机密字段只给「已设置」标记（`dsh-client-ui-settings/README.md:49`），设置页据此显示 `••••`。
+- 输入框是**写入型**：提交成功后清空，不保留在组件 state 里。
+- 登录成功后 Host 返回 `email`，设置页显示「已登录 as …」；`E_AUTH_EXPIRED` 时徽章变红并提供「重新登录」。
+- 与工具一致：`overleaf_login` 的 schema 里也没有密码字段——GUI 同样不提供密码登录。
+
+#### 14.3.6 保存语义
+
+- **显式保存**（页面底部「保存修改」），不做逐字段自动保存：配置有跨字段约束（如 `watch.autoStart` 依赖已登录 + 已绑定），半保存状态会让插件进入无法解释的中间态。
+- 保存带 `expectedRevision`；Host 侧 `settings.update(ns, patch, expectedRevision)` 冲突时抛 `SettingsConflictError` → 路由映射 **409** → 页面提示「配置已在别处修改，刷新后重试」，**绝不覆盖**。
+- 保存成功后若需要重载才生效（watch 参数），页面顶部显示「部分改动在下次同步时生效」提示，不静默。
+
+### 14.4 侧边栏面板
+
+#### 14.4.1 注册：只走原生右侧栏，better-sidebar 留作可选增强
+
+```ts
+// 平台保证的入口：注册一个 tab 类型 + 它的 body slot（两段式，key 必须一致）
+const stopType = ctx.sidebarRightTabs.register({
+  id: 'overleaf-sync',
+  kind: 'overleaf-sync',
+  title: () => t('overleaf.tab.title'),
+  priority: 'extension',
+})
+
+const stopBody = ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+  name: 'sidebar.right.pane.tab',
+  key: 'overleaf-sync',
+  inject: (sessionId: string) => ({ sessionId, api, t }),
+}, OverleafPanel))
+
+return () => { stopBody?.(); stopType?.() }   // 两段成对回滚
+```
+
+**为什么不优先 `ctx.betterSidebar.registerTab`**：它是第三方插件提供的便利服务，装了才有、版本会漂移，而且它会**自动为每个注册类型生成一个原生 tab 类型**——若我们同时注册原生类型，用户会看到两个 Overleaf tab；只依赖它则没装 better-sidebar 的用户什么都看不到。所以 v1 只调平台原生 API（`sidebarRightTabs` + `sidebar.right.pane.tab`），把 better-sidebar 集成放到 M4c 作为可选增强（届时用 `ctx.inject(['betterSidebar'], …)` 且**不再**注册原生类型）。
+
+左侧栏**不占**：Overleaf 是项目级工具，语义上属于「右侧 IDE 区」，且左侧 `sidebar.panellist` 选中不存在的 `main` 会抛错（`client-ui-notes.md` §3）。右侧也没有 pane 级 action 槽或折叠态控件槽，所以所有动作都放在 tab body 内部。
+
+#### 14.4.2 信息架构
+
+```
+┌ Overleaf ──────────────────── ● 已连接 ┐
+│ arXiv 模板            [↻]  [设置]      │
+│ ───────────────────────────────────── │
+│ 状态   ● 已同步 · 42 个文件             │
+│ 远端   v128 · 2 小时前                  │
+│ 本地   3 个改动待推 · 0 个冲突          │
+│ ───────────────────────────────────── │
+│ [ Pull ]  [ Push (dry-run) ]  [ 打开目录 ] │
+│ ───────────────────────────────────── │
+│ 冲突 (2)                    [全部打开] │
+│  ⚠ main.tex        remote-2026…         │
+│  ⚠ refs.bib        remote-2026…         │
+│ ───────────────────────────────────── │
+│ 日志                                    │
+│ 21:04 pull 42 files ok                  │
+│ 20:58 push 3 docs ok                    │
+└─────────────────────────────────────────┘
+```
+
+- 状态徽章用 `StateDot` + `Pill`（`已同步` / `同步中` / `有冲突` / `未连接` / `未登录`）。
+- 动作按钮用 `Button`；图标统一 `Icon*Regular`；日志区用等宽 `TerminalBlock` 或 `<pre>`。
+- 列表自己 `map`——primitives 里没有 Table/List 组件（`client-ui-notes.md` §4）。
+
+#### 14.4.3 会话与项目的关系
+
+右侧栏布局本身按 `sessionId` 存（平台行为），但**同步状态是项目级的**：一个 profile 同时只绑定一个「当前项目」（§9.1 状态机）。因此面板约定：
+
+- 面板在哪个会话打开都显示**同一个**当前绑定项目，数据同源、靠事件广播更新；
+- 未来若支持多项目并行，再把 `sessionId → projectId` 映射加进来（面板 `inject(sessionId)` 已经预留了这个入参）；
+- 无绑定项目时显示空态：引导去设置页绑定，或直接内嵌「从远端选项目」下拉。
+
+#### 14.4.4 动作与确认
+
+| 动作 | 前置校验 | 确认 | 结果呈现 |
+| --- | --- | --- | --- |
+| Pull | 已登录 + 已绑定 | 本地有未推改动时二次确认（会保留冲突副本） | 进度条 → 摘要（N 个文件 / 冲突 M 个） |
+| Push (dry-run) | 已登录 + 已绑定 | 不需要 | 变更清单（文件 + op 数） |
+| Push（真写） | dry-run 已完成 | **必须二次确认**，且 Host 侧仍检查 `confirmRemoteWrite` | 逐文档结果，失败的文档列出错误码 |
+| 打开目录 | 已绑定 | 不需要 | 走平台 `openWorkspacePath`；无此能力时复制路径并 toast |
+
+#### 14.4.5 更新机制：SSE + 降级轮询
+
+- Host 侧开 `GET /overleaf/events`（SSE），事件帧只带**失效通知 + seq**（学 better-sidebar 的 sidechat 推送：帧不带大 payload，客户端凭 `afterSeq` 重拉，`client-ui-notes.md` §5.3）。
+- 事件类型：`status`（状态变化）、`progress`（pull/push 进度）、`conflict`（新增冲突）、`auth-expired`、`reloaded`。
+- 客户端：`EventSource` 断线指数退避 1s→15s；`document.visibilityState === 'hidden'` 时断开，恢复可见时重连并带 `afterSeq` 补拉。
+- 若 SSE 三次重连失败：降级为 10s 轮询 `status`，面板顶部显示「实时更新不可用」。
+
+### 14.5 Host 侧接口（客户端唯一通道）
+
+第三方插件不能注册 `ctx.remote` 命名空间（`client-ui-notes.md` §5，无证据支持），所以 Node 半侧自建同源路由，客户端用 `fetch` 调（与 better-sidebar 的 `/sidebar/api/<method>` 同构）：
+
+| 方法 | 请求 | 返回 | 错误码 |
+| --- | --- | --- | --- |
+| `status` | `{}` | `StatusSummary` | — |
+| `login` | `{ cookie, csrf? }` | `{ ok, email? }` | `E_AUTH_INVALID` |
+| `logout` | `{}` | `{ ok }` | — |
+| `projects` | `{ refresh? }` | `ProjectListEntry[]` | `E_AUTH_EXPIRED` |
+| `link` | `{ projectId, localRoot? }` | `LinkRecord` | `E_LOCAL_DIR_INVALID`、`E_PROJECT_NOT_FOUND` |
+| `validate-path` | `{ path, projectId? }` | `{ ok, resolved, problems[] }` | — |
+| `pull` | `{ projectId?, force? }` | `PullSummary` | `E_CONFLICT`、`E_TRANSPORT` |
+| `push` | `{ projectId?, dryRun }` | `PushSummary` | `E_CONFLICT`、`E_AUTH_EXPIRED` |
+| `diff` | `{ projectId?, path? }` | `DiffSummary` | — |
+| `conflicts` | `{}` | `ConflictEntry[]` | — |
+| `journal` | `{ limit }` | `JournalEntry[]` | — |
+| `settings.describe` | `{}` | `{ fields, revision }` | — |
+| `settings.update` | `{ patch, expectedRevision }` | `{ fields, revision }` | `settings-conflict`(409)、`settings-rejected`(400) |
+
+约定：
+
+- 全部 `POST` + JSON，同源，带 `AbortSignal` 取消；路由层校验 `Origin`/`Sec-Fetch-Site` 同源，拒绝跨站（防 CSRF）。
+- 返回信封 `{ ok: true, value }` / `{ ok: false, code, message, hint? }`，`code` 与工具错误码同一套（§12 的 `E_*` 表）。
+- `sessionId` 由客户端附带、Host 只用于日志与后续多项目路由，**不用于鉴权**（鉴权仍是平台会话 + 凭据中心）。
+- 路由只做参数校验与错误映射，业务逻辑一律复用 `OverleafSyncService`（与工具同一份实现，禁止平行逻辑）。
+
+### 14.6 安全边界
+
+| 面 | 约束 |
+| --- | --- |
+| 凭据 | 只在 Host 侧；不出现在 config、不返回客户端、日志脱敏 |
+| 路径 | `localRoot` 必须经 Host 侧 `realpath` + 越界校验（不得写出用户主目录之外的隐式路径，显式绝对路径需确认） |
+| 写远端 | GUI 二次确认 + Host 侧 `confirmRemoteWrite` 双保险 |
+| 跨站 | 路由同源校验；不提供 GET 副作用接口 |
+| 注入 | 所有远端文本（项目名、文件名）渲染时转义；日志块不解析 HTML |
+
+### 14.7 构建与测试
+
+- 构建：`tsdown` 双入口（Node `lib/index.js`、浏览器 `lib/client.js`），`build = "tsc -p tsconfig.build.json && tsdown"`；`pnpm run dev:web` 下 HMR 热更。
+- 体积预算：`lib/client.js` < 150 KB（gzip 后 < 45 KB）；超了就把 diff 视图拆 chunk。
+- 测试：
+  - 组件测试：Node 侧 `renderToString` 快照（空态/已同步/冲突/未登录/凭据过期五态）；
+  - 路由测试：对 `/overleaf/api/*` 用真实 service + 假 transport，断言错误码映射与 409 冲突；
+  - 手动 E2E 清单：装插件 → 设置页填 cookie → 选项目 → 校验目录 → 绑定 → 面板 pull → 本地改 → 面板 dry-run → 真写 → 制造冲突看列表。
+
+### 14.8 里程碑拆分
+
+| 阶段 | 内容 | 验收 |
+| --- | --- | --- |
+| M4a 设置页 | 自建 `/overleaf/api/settings.*` + 账号/项目/目录/策略四区块 + 显式保存与 409 | 能在 GUI 里完成「登录 → 选项目 → 绑定 → 改策略并保存」，重启后配置仍在 |
+| M4b 侧边栏 | 右侧 tab（原生两段式注册）+ 状态/动作/冲突/日志 + SSE | 面板 pull/push 与工具结果一致；断网重连后状态自愈；冲突实时出现 |
+| M4c 打磨 | 工具卡片（`tool.call.toolview`）、审计日志视图、多项目预留 | — |
+
+---
+
+## 15. 测试策略
+
+### 15.1 单元（无网络）
 
 - `ot/diff`：随机文本对 500 组，断言 `applyOps(old, diffToOps(old,new)) === new`；
 - `ot/transform`：互不相交/相交用例，交换律与幂等；
@@ -910,7 +1179,7 @@ sequenceDiagram
   - `git` 不在 PATH（mock spawn 失败）→ 返回警告且不抛错；
   - 无 `user.name/email` → 用 `-c` 兜底提交成功，且 `git config --global` 未被改写。
 
-### 14.2 集成（Mock Overleaf）
+### 15.2 集成（Mock Overleaf）
 
 自建一个 socket.io 服务模拟 `joinProject/joinDoc/applyOtUpdate/otUpdateApplied` + 一个内存版文档仓库（含版本号与 op 历史）。测试：
 
@@ -920,13 +1189,13 @@ sequenceDiagram
 4. 断线重连：离线期间本地多次改 → 重连后一次性收敛；
 5. 回环抑制：远端更新写盘后不得再次触发提交（断言 applyOtUpdate 调用次数）。
 
-### 14.3 端到端（真实 Overleaf，手动/条件触发）
+### 15.3 端到端（真实 Overleaf，手动/条件触发）
 
 - 用测试账号 + 测试项目（自己或导师授权的项目）；
 - 验收藏点：中文 `.tex`（UTF-8、CRLF 混用）、含 `\input` 的多文件、图目录、`.bib`；
 - 并发编辑用两个浏览器标签模拟。
 
-### 14.4 验收标准（MVP）
+### 15.4 验收标准（MVP）
 
 - [ ] 只读：`overleaf_projects` + `overleaf_pull` 能把项目完整拉到本地（含子文件夹），默认落在 `~/Overleaf/<项目名>`。
 - [ ] 仓库：首次 `overleaf_pull` 成功后目录里出现 `.git`，`git log` 有一条 import 提交，`git status` 干净；已在上层仓库内时不新建嵌套仓库。
@@ -938,23 +1207,25 @@ sequenceDiagram
 
 ---
 
-## 15. 里程碑
+## 16. 里程碑
 
 | 阶段 | 内容 | 产出 | 预估 |
 | --- | --- | --- | --- |
 | M0 调研 | 协议实测（cookie/csrf、事件名、op 格式）、Mock 服务器搭建 | 调研笔记 + Mock | 2 人日 |
 | M1 只读 | transport + `overleaf_projects/pull/status/login` + 默认目录 `~/Overleaf/<项目名>` + 拉取后 `git init` 首次提交（§5.8） | 能拉取项目并留下一份干净的本地仓库 | 3 人日 |
 | M2 双向 | ot 模块 + DocSession + push + watch | 本地改→云端可见 | 5 人日 |
-| M3 稳健 | 冲突/掉队/重连/二进制下载/状态机完善 | 验收 §14.4 | 5 人日 |
-| M4 打磨 | 系统提示注入、GUI 状态卡片（`dsh.client` + `lib/client.js` + `ctx.slots` 槽 `settings.section` / `tool.call.toolview`）、配置热更新、日志审计 | 可发布 | 3 人日 |
+| M3 稳健 | 冲突/掉队/重连/二进制下载/状态机完善 | 验收 §15.4 | 5 人日 |
+| M4a 设置页 | `dsh.client` 清单 + tsdown 双入口 + `settings.section` 页 + 自建 `/overleaf/api/settings.*`（§14.3） | 可在 GUI 完成登录/绑定/策略保存 | 2 人日 |
+| M4b 侧边栏 | 右侧 tab（原生两段式注册）+ 状态/动作/冲突/日志 + SSE（§14.4/14.5） | 面板与工具结果一致、断网自愈 | 3 人日 |
+| M4c 打磨 | 工具卡片（`tool.call.toolview`）、better-sidebar 可选集成、系统提示注入、配置热更新、日志审计视图 | 可发布 | 2 人日 |
 
-M0 的产出里还应固化三件实现层面的"钉死项"（详见 [插件 API 笔记](dsh-plugin-api-notes.md) §9/§10）：`HarnessError` 基类的真实包名、`dsh plugin add` 的确切子命令、客户端半是否需要构建（`dsh.client` 清单 vs `window.__ModuleLoader__` 免构建写法）。
+M0 的产出里还应固化三件实现层面的“钉死项”：`HarnessError` 基类的真实包名、`dsh plugin add` 的确切子命令（见 [插件 API 笔记](dsh-plugin-api-notes.md) §9/§10），以及客户端半的构建方式——已由 [客户端 UI 调研](client-ui-notes.md) §1 回答：**需要构建**，`exports["./client"]` + `dsh.client.platform: "web"`，产物是 `window.__ModuleLoader__.load({ id, factory })` 而非 ESM。
 
 风险缓冲：协议逆向若与假设不符（overleaf.com 版本差异），M0 可能 +2 人日，且 M2 需要重做 transport 层——因此 transport 接口必须先冻结（§6.1）。
 
 ---
 
-## 16. 风险与开放问题
+## 17. 风险与开放问题
 
 1. **协议非公开**：Overleaf 升级可能改名事件/字段。缓解：transport 抽象 + 版本探测（`joinProject` 返回的 `protocolVersion` 记录在状态里，异常时提示"可能不兼容"）。
 2. **合规**：使用非官方通道可能违反 Overleaf 使用条款；建议在文档里明确"仅用于自己有权编辑的项目"，并提示学校的 Overleaf 服务条款差异。
@@ -1023,14 +1294,14 @@ M0 的产出里还应固化三件实现层面的"钉死项"（详见 [插件 API
 | §6.3 OT diff | `src/core/otDiff.ts` | ✅ `diffToOps` / `applyOps` / `transformOps` |
 | §6.5 状态 | `src/core/stateStore.ts` | ✅ `~/.dsh/overleaf-sync/projects/<id>/state.json` |
 | §6.6 忽略 | `src/core/ignore.ts` | ✅ `.gitignore` / `.overleaf-syncignore` 语义 |
-| §14 可观测性 | `src/core/journal.ts` | ✅ 审计流水（凭据脱敏） |
+| §13 可观测性 | `src/core/journal.ts` | ✅ 审计流水（凭据脱敏） |
 | §7.3 pull | `src/service.ts` `pull()` | ✅ 全量下载 + baseline + 自动 git init |
 | §7.3 push | `src/service.ts` `push()` | ✅ 默认 dry-run，逐文档 OT 提交，不覆盖冲突 |
 | §7.4 冲突 | `src/service.ts` `pull()` | ✅ 远端写 `*.remote-<ts>.<ext>`，本地保留 |
 | §10 工具 | `src/tools/index.ts`（`createOverleafTools`）+ `src/index.ts` 注册 | ✅ status/login/logout/projects/link/pull/push/diff |
 | §7.2 watch | — | ⏳ M3 |
 | §10 `overleaf_resolve` | — | ⏳ M3 |
-| §13 GUI 卡片 / 审批钩子 | — | ⏳ M4 |
+| §14 GUI：设置页 / 侧边栏 | — | ⏳ M4a / M4b（契约见 [client-ui-notes.md](client-ui-notes.md)） |
 
 测试：`test/{core,transport,service,plugin}/` 共 **92 个用例**（`node --test 'test/**/*.test.mjs'`，需先 `tsc` 构建）。
 
