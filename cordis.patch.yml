@@ -1,0 +1,32 @@
+# dsh-overleaf-sync — bind a local LaTeX folder to an Overleaf project.
+#
+# This is the bundle default. A profile-level patch replaces this whole row
+# (`- id: overleaf-sync` + `config:`), so keep every non-default field you rely
+# on there — there is no deep merge.
+#
+#   dsh plugin --profile <name> add dsh-overleaf-sync
+#
+# After enabling, run `overleaf_login` once (paste the browser Cookie and CSRF
+# token — never your password), then `overleaf_projects` / `overleaf_link` /
+# `overleaf_pull`.
+- insert:
+    - id: overleaf-sync
+      name: dsh-overleaf-sync
+      config:
+        baseUrl: https://www.overleaf.com
+        localRootPattern: "~/Overleaf/{project}"
+        defaultStrategy: keep-both
+        watch:
+          autoStart: false
+          idleLeaveDocMs: 60000
+          maxOpenDocs: 20
+        git:
+          autoInit: true
+          autoCommit: false
+          initialCommitMessage: 'chore: import "{project}" from Overleaf'
+          includeBinaryInFirstCommit: false
+        journal:
+          enabled: true
+          keepDays: 7
+        confirmRemoteWrite: true
+        debug: false
