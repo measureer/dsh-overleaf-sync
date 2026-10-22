@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 const plugin = await import('../../lib/index.js')
+const { resolveConfig } = await import('../../lib/config.js')
 
 function fakeContext() {
   const registered = []
@@ -70,11 +71,20 @@ test('apply() registers every overleaf_* tool and disposes them cleanly', () => 
 })
 
 test('config schema fills in the documented defaults', () => {
-  const config = plugin.Config({})
+  // Editable fields are `.volatile()`, so the schema yields references; the
+  // public way to read them is `resolveConfig`, which unwraps every one.
+  const config = resolveConfig(plugin.Config({}))
 
   assert.equal(config.baseUrl, 'https://www.overleaf.com')
   assert.equal(config.localRootPattern, '~/Overleaf/{project}')
   assert.equal(config.defaultStrategy, 'keep-both')
   assert.equal(config.git.autoInit, true)
   assert.equal(config.watch.autoStart, false)
+})
+
+test('volatile fields stay references until resolveConfig unwraps them', () => {
+  const raw = plugin.Config({})
+  assert.equal(typeof raw.baseUrl, 'object')
+  assert.equal(raw.baseUrl.get(), 'https://www.overleaf.com')
+  assert.equal(resolveConfig(raw).baseUrl, 'https://www.overleaf.com')
 })

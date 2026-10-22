@@ -26,6 +26,11 @@ export function conflictsDir(projectId: string): string {
   return path.join(projectStateDir(projectId), 'conflicts')
 }
 
+/** Append-only sync journal for one project (`journal.ndjson`). */
+export function journalPath(projectId: string): string {
+  return path.join(projectStateDir(projectId), 'journal.ndjson')
+}
+
 /** Keep ids usable as directory names even if Overleaf ever hands us odd ones. */
 export function sanitizeSegment(value: string): string {
   return value.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')

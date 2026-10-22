@@ -10,6 +10,10 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -32,6 +36,15 @@
     },
     "engines": {
       "dsh": ">=0.1.7-rc.1"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
     }
   },
   "engines": {
@@ -39,11 +52,15 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "bundle": "tsdown",
+    "watch": "tsdown --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:client": "tsc --noEmit --strict --noUncheckedIndexedAccess --jsx react-jsx --module esnext --moduleResolution bundler --target es2022 --lib es2022,dom,dom.iterable --skipLibCheck --resolveJsonModule --esModuleInterop --types node src/client/index.tsx",
     "test": "node --test \"test/**/*.test.mjs\"",
     "prepack": "npm run build"
   },
   "dependencies": {
+    "@deepseek-ai/cosmokit": "1.8.6",
     "@deepseek-ai/schemastery": "^3.18.4",
     "socket.io-client": "^4.8.4"
   },
@@ -53,8 +70,17 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.5",
+    "@deepseek-ai/dsh-client-locale": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-settings": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.1-rc.2",
     "@deepseek-ai/dsh-tools": "^0.2.1-rc.2",
     "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tsdown": "^0.22.2",
     "typescript": "^5.9.3"
   }
 }

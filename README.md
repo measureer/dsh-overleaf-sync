@@ -63,19 +63,29 @@ dsh plugin --profile desktop add link:C:/code/dsh-overleaf-sync
 ```bash
 npm run build      # tsc → lib/
 npm run typecheck  # tsc --noEmit
-npm test           # node --test 'test/**/*.test.mjs'（92 个：transport 51 + core 34 + service 4 + plugin 3）
+npm test           # node --test 'test/**/*.test.mjs'（113 个：transport 51 + core 34 + service 4 + plugin 4 + server 20）
 ```
 
 测试用假 transport 跑真实文件系统与 git：`test/service/pull.test.mjs` 覆盖拉取、幂等拉取、推送 OT、冲突保留四条主路径。
 
-## GUI（设计阶段，M4a/M4b）
+## GUI（M4a Host 半侧已完成，浏览器半侧进行中）
 
 浏览器半侧（`lib/client.js`）分两块，都是**薄壳**——所有文件与网络操作仍在 Node 半侧，客户端只渲染与触发：
 
 - **设置页**（Settings → Overleaf 同步）：粘贴 Cookie/CSRF（只写凭据中心、不回显）、选项目、校验并绑定本地目录、冲突策略与 git/watch 开关；显式「保存修改」，写回 profile 配置条目，409 冲突不覆盖。
 - **右侧边栏 tab**（Overleaf）：连接/同步状态、待推改动、Pull / Push(dry-run) / 打开目录、冲突列表、日志尾巴；SSE 实时刷新，断线降级轮询。
 
-细节与 API 契约见[设计文档 §14](docs/design.md) 与[客户端 UI 契约调研](docs/client-ui-notes.md)。
+**Host 半侧已就绪**：插件在 DSH Web 上注册 `/overleaf/api/*`（`status`、`login`、`logout`、`projects`、
+`validate-path`、`link`、`pull`、`push`、`diff`、`conflicts`、`journal`、`settings.describe`、`settings.update`），
+统一 JSON 信封、同源校验、错误码 → HTTP 状态映射；配置页写入走 DSH Settings 服务（乐观锁 revision，
+冲突回 `E_SETTINGS_CONFLICT`，绝不覆盖别处的修改）。没有 `webServer`/`settings` 的宿主会退化成纯工具插件。
+
+浏览器半侧（`lib/client.js`）分两块，都是**薄壳**——所有文件与网络操作仍在 Node 半侧，客户端只渲染与触发：
+
+- **设置页**（Settings → Overleaf 同步）：粘贴 Cookie/CSRF（只写凭据中心、不回显）、选项目、校验并绑定本地目录、冲突策略与 git/watch 开关；显式「保存修改」，写回 profile 配置条目，409 冲突不覆盖。
+- **右侧边栏 tab**（Overleaf）：连接/同步状态、待推改动、Pull / Push(dry-run) / 打开目录、冲突列表、日志尾巴；SSE 实时刷新，断线降级轮询。
+
+细节与 API 契约见[设计文档 §14](docs/design.md)、[Host↔浏览器接口契约](docs/m4a-api-contract.md) 与[客户端 UI 契约调研](docs/client-ui-notes.md)。
 
 ## 文档
 

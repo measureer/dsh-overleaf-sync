@@ -17,6 +17,16 @@ export type OverleafErrorCode =
   | 'E_GIT_INIT_FAILED'
   | 'E_GIT_BROKEN'
   | 'E_CONFIG'
+  // GUI surface (M4a): HTTP-facing codes, see docs/m4a-api-contract.md.
+  | 'E_AUTH_INVALID'
+  | 'E_VALIDATION'
+  | 'E_LOCAL_DIR_INVALID'
+  | 'E_LOCAL_DIR_CONFIRM_REQUIRED'
+  | 'E_CONFIRM_REQUIRED'
+  | 'E_BUSY'
+  | 'E_SETTINGS_CONFLICT'
+  | 'E_CROSS_SITE'
+  | 'E_INTERNAL'
 
 export class OverleafSyncError extends Error {
   readonly code: OverleafErrorCode

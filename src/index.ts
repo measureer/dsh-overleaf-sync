@@ -8,9 +8,10 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 
-import { ConfigSchema, resolveConfig, type Config as ResolvedConfig } from './config.js'
+import { ConfigSchema, liveConfig, type Config as ResolvedConfig } from './config.js'
 import { OverleafSyncService } from './service.js'
 import { createOverleafTools } from './tools/index.js'
+import { registerOverleafApi } from './server/index.js'
 
 export const name = 'dsh-overleaf-sync'
 
@@ -20,7 +21,9 @@ export const Config = ConfigSchema
 export const inject = ['tools']
 
 export function apply(ctx: Context, input?: Partial<ResolvedConfig>): void {
-  const config = resolveConfig(input ?? {})
+  // `liveConfig` keeps the volatile references: a Settings write patches them in
+  // place, and every read below sees the new value without a plugin remount.
+  const config = liveConfig(input ?? {})
   const service = new OverleafSyncService(config)
 
   ctx.inject(['tools'], (sctx) => {
@@ -31,4 +34,7 @@ export function apply(ctx: Context, input?: Partial<ResolvedConfig>): void {
       }
     })
   })
+
+  // The GUI half is optional: a host without a web server just never loads it.
+  registerOverleafApi(ctx, { service, config, cwd: process.cwd(), namespace: 'overleaf-sync' })
 }
