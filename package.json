@@ -59,7 +59,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:client": "tsc --noEmit --strict --noUncheckedIndexedAccess --jsx react-jsx --module esnext --moduleResolution bundler --target es2022 --lib es2022,dom,dom.iterable --skipLibCheck --resolveJsonModule --esModuleInterop --types node src/client/index.tsx",
     "test": "node --test \"test/**/*.test.mjs\"",
-    "prepack": "npm run build"
+    "prepack": "tsc -p tsconfig.json && tsdown"
   },
   "dependencies": {
     "@deepseek-ai/cosmokit": "1.8.6",
