@@ -5,11 +5,14 @@ import { LegacyTransport } from './legacyTransport.js'
 import { OverleafSocket } from './socket.js'
 
 /**
- * Overall budget for a legacy connect. The 0.9 client retries a refused
- * upgrade on the same session, so this is the last line of defence against a
- * server that silently accepts the handshake and then never upgrades.
+ * Hard budget for a legacy connect. The 0.9 stack retries a refused upgrade on
+ * the same session, and a server that is holding another editor session for the
+ * same account can keep us waiting indefinitely, so the caller must never hang.
  */
-const LEGACY_CONNECT_BUDGET_MS = 90_000
+const LEGACY_CONNECT_BUDGET_MS = 45_000
+
+const LEGACY_HINT =
+  'a self-hosted Overleaf instance that refuses the socket upgrade usually has another editor session for the same account and project — close the project in your browser, then retry'
 
 /**
  * Transport factory used by the service layer. Resolves only after the socket
@@ -31,55 +34,46 @@ export const createTransport: TransportFactory = async (
     ...(options?.signal ? { signal: options.signal } : {}),
   })
   if (protocol === 'legacy') {
-    return await withBudget(
-      LegacyTransport.connect(credential, projectId, options ?? {}),
-      LEGACY_CONNECT_BUDGET_MS,
-      options?.signal,
-    )
+    return await connectLegacy(credential, projectId, options)
   }
   return OverleafSocket.connect(credential, projectId, options)
 }
 
-/**
- * Reject if `task` has not settled within `budgetMs`. The socket client owns
- * its own timers; this only guarantees the caller is never stuck forever.
- */
-async function withBudget<T>(
-  task: Promise<T>,
-  budgetMs: number,
-  signal?: AbortSignal,
-): Promise<T> {
-  if (signal?.aborted) {
-    throw new OverleafSyncError('E_TIMEOUT', 'the Overleaf request was cancelled', 'retry the operation')
-  }
-  let timer: NodeJS.Timeout | undefined
-  let onAbort: (() => void) | undefined
+/** `LegacyTransport.connect` with a hard deadline and an actionable timeout. */
+async function connectLegacy(
+  credential: Credential,
+  projectId: string,
+  options?: { signal?: AbortSignal },
+): Promise<OverleafTransport> {
+  const controller = new AbortController()
+  const outer = options?.signal
+  const onOuterAbort = (): void => controller.abort()
+  if (outer?.aborted === true) controller.abort()
+  outer?.addEventListener('abort', onOuterAbort, { once: true })
+
+  const timer: NodeJS.Timeout = setTimeout(() => controller.abort(), LEGACY_CONNECT_BUDGET_MS)
+  const deadline = new Promise<never>((_, reject) => {
+    const onAbort = (): void =>
+      reject(
+        new OverleafSyncError(
+          'E_TIMEOUT',
+          `could not join the Overleaf project within ${Math.round(LEGACY_CONNECT_BUDGET_MS / 1000)} s`,
+          LEGACY_HINT,
+        ),
+      )
+    controller.signal.addEventListener('abort', onAbort, { once: true })
+  })
   try {
     return await Promise.race([
-      task,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          reject(
-            new OverleafSyncError(
-              'E_TIMEOUT',
-              `could not join the Overleaf project within ${Math.round(budgetMs / 1000)} s`,
-              'a self-hosted Overleaf instance that keeps refusing the socket upgrade usually has another editor session for the same account and project — close the project in your browser, then retry',
-            ),
-          )
-        }, budgetMs)
-        timer.unref()
-        if (signal) {
-          onAbort = () =>
-            reject(
-              new OverleafSyncError('E_TIMEOUT', 'the Overleaf request was cancelled', 'retry the operation'),
-            )
-          signal.addEventListener('abort', onAbort, { once: true })
-        }
+      LegacyTransport.connect(credential, projectId, {
+        ...(options ?? {}),
+        signal: controller.signal,
       }),
+      deadline,
     ])
   } finally {
-    if (timer) clearTimeout(timer)
-    if (signal && onAbort) signal.removeEventListener('abort', onAbort)
+    clearTimeout(timer)
+    outer?.removeEventListener('abort', onOuterAbort)
   }
 }
 

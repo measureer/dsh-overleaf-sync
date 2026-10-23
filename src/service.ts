@@ -305,7 +305,7 @@ export class OverleafSyncService {
       projectName: project.name,
       localRoot,
       include: input.include ?? existing?.include ?? ['**/*.tex', '**/*.bib', '**/*.cls', '**/*.sty', '**/*.md', '**/*.txt'],
-      exclude: input.exclude ?? existing?.exclude ?? ['**/*.pdf', '.git/**', 'node_modules/**'],
+      exclude: input.exclude ?? existing?.exclude ?? ['.git/**', 'node_modules/**'],
       strategy: input.strategy ?? existing?.strategy ?? this.config.defaultStrategy,
       autoPush: existing?.autoPush ?? true,
       throttleMs: existing?.throttleMs ?? 500,

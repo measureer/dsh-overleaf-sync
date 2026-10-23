@@ -662,7 +662,7 @@ type MergeResult =
   "projectId": "64f…",
   "localRoot": "C:/Users/me/Overleaf/毕业论文",
   "include": ["**/*.tex", "**/*.bib", "figures/**"],
-  "exclude": ["**/*.pdf", ".git/**"],
+  "exclude": [".git/**", "node_modules/**"],
   "strategy": "auto",              // auto | keep-local | keep-remote | keep-both
   "autoPush": true,                // 工具模式下是否自动提交（false 则只 diff）
   "throttleMs": 500,

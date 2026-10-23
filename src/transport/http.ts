@@ -3,6 +3,8 @@ import type { Credential, ProjectListEntry } from '../types.js'
 import { normalizeBaseUrl } from './credentials.js'
 
 const REQUEST_TIMEOUT_MS = 15_000
+/** Binary files are fetched in one shot, so they get a more generous deadline. */
+const FILE_TIMEOUT_MS = 120_000
 const USER_AGENT = 'dsh-overleaf-sync/0.1'
 
 /** Result of validating a stored Overleaf session against the website. */
@@ -26,6 +28,8 @@ interface SendInit {
   body?: string
   headers?: Record<string, string>
   redirect?: 'follow' | 'manual' | 'error'
+  /** Per-request deadline; binary downloads get a longer one than JSON calls. */
+  timeoutMs?: number
 }
 
 interface Deadline {
@@ -208,7 +212,9 @@ export class OverleafHttp {
   ): Promise<Uint8Array> {
     const label = `GET project/${projectId}/file/${fileId}`
     const pathname = `project/${encodeURIComponent(projectId)}/file/${encodeURIComponent(fileId)}`
-    const response = await this.send(pathname, label, signal, 'bytes')
+    const response = await this.send(pathname, label, signal, 'bytes', {
+      timeoutMs: FILE_TIMEOUT_MS,
+    })
     if (response.status < 200 || response.status >= 300) {
       throw failureForStatus(response.status, label, response.location)
     }
@@ -263,7 +269,7 @@ export class OverleafHttp {
     init: SendInit = {},
   ): Promise<RawResponse> {
     const url = new URL(pathname.replace(/^\/+/, ''), this.baseUrl)
-    const gate = withDeadline(signal, REQUEST_TIMEOUT_MS)
+    const gate = withDeadline(signal, init.timeoutMs ?? REQUEST_TIMEOUT_MS)
     const method = init.method ?? 'GET'
     const headers: Record<string, string> = {
       Cookie: this.cookie,
