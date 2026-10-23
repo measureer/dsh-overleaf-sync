@@ -24,6 +24,7 @@ import { describeError, recordDiagnostic } from './diagnostics.js'
 import { createOverleafRoutes, type WebRoute } from './routes.js'
 import { SettingsBridge, type SettingsServiceLike } from './settingsBridge.js'
 import type { PickDirectoryResult } from './types.js'
+import { pickViaWindows, windowsPickerAvailable } from './windowsPicker.js'
 
 export interface ServerDeps {
   service: OverleafSyncService
@@ -60,21 +61,41 @@ const PICK_TIMEOUT_MS = 15 * 60_000
 function createDirectoryPicker(ctx: Context): ((probe?: boolean) => Promise<PickDirectoryResult>) | undefined {
   return async (probe = false) => {
     const picker = readService<DirectoryPickerLike>(ctx, 'directoryPicker')
-    if (picker === undefined) return { kind: 'unavailable', path: null }
+    const capability = picker === undefined ? undefined : safelyCapability(picker)
     try {
-      const capability = picker.capability()
-      if (capability.kind !== 'native' || typeof capability.pick !== 'function') {
-        recordDiagnostic('picker-non-native', { kind: String(capability.kind) })
-        return { kind: 'browse', path: null }
+      if (capability !== undefined && capability.kind === 'native' && typeof capability.pick === 'function') {
+        if (probe) return { kind: 'native', path: null }
+        const picked = await capability.pick(AbortSignal.timeout(PICK_TIMEOUT_MS))
+        recordDiagnostic('picker-native', { picked: picked !== null })
+        return { kind: 'native', path: picked ?? null }
       }
-      if (probe) return { kind: 'native', path: null }
-      const picked = await capability.pick(AbortSignal.timeout(PICK_TIMEOUT_MS))
-      recordDiagnostic('picker-native', { picked: picked !== null })
-      return { kind: 'native', path: picked ?? null }
+      // The seam was repointed to its in-browser backend (dsh-remote-web does
+      // that on desktop so phones can pick folders). That leaves no OS dialog,
+      // so on Windows we show our own — the desktop user expects one.
+      if (windowsPickerAvailable()) {
+        if (probe) return { kind: 'native', path: null }
+        const picked = await pickViaWindows(AbortSignal.timeout(PICK_TIMEOUT_MS))
+        if (picked !== undefined) {
+          recordDiagnostic('picker-windows', { seam: capability?.kind ?? 'missing', picked: picked.path !== null })
+          return { kind: 'native', path: picked.path }
+        }
+        recordDiagnostic('picker-windows-failed', { seam: capability?.kind ?? 'missing' })
+      }
+      recordDiagnostic('picker-non-native', { kind: capability === undefined ? 'missing' : String(capability.kind) })
+      return { kind: capability === undefined ? 'unavailable' : 'browse', path: null }
     } catch (error) {
       recordDiagnostic('picker-failed', { error: describeError(error) })
       throw error
     }
+  }
+}
+
+/** `capability()` may throw when the service is mid-swap; treat that as unknown. */
+function safelyCapability(picker: DirectoryPickerLike): { kind: string; pick?: (signal: AbortSignal) => Promise<string | null> } | undefined {
+  try {
+    return picker.capability()
+  } catch {
+    return undefined
   }
 }
 

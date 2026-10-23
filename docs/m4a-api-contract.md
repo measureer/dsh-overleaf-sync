@@ -42,7 +42,8 @@
 `pick-directory` 由宿主可选的 `ctx.directoryPicker` 支撑（桌面端解析为 `native`，即系统「选择文件夹」对话框）：
 - `probe: true` 只回答能力，不弹窗 —— 页面加载时用它决定显示「选择目录」还是「校验路径」；
 - 不传 `probe` 时弹窗等待用户，`path` 为用户选中的绝对目录，取消为 `null`；
-- `browse` / `unavailable` 表示该宿主没有系统选择框，页面保留手动输入 + `validate-path` 兜底。
+- 宿主的 `directoryPicker` 被切成 `browse`（DSH Desktop 上 dsh-remote-web 会这么做，好让手机也能选目录）时，seam 不再提供系统对话框；此时 Windows 宿主由插件自带的 PowerShell `FolderBrowserDialog` 兜底（`src/server/windowsPicker.ts`，UTF-8 临时文件回传路径以免控制台代码页吃掉中文），仍报 `native`；
+- `browse` / `unavailable` 表示该宿主确实没有系统选择框（非 Windows，且 seam 非 native），页面保留手动输入 + `validate-path` 兜底。
 
 
 ### 2.1 StatusSummary（GUI 视角，`src/server/types.ts`）
