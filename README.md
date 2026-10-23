@@ -9,6 +9,11 @@ DSH（DeepSeek Harness）插件：把本地 LaTeX 文件夹与 Overleaf 项目�
 ## 安装
 
 ```bash
+# 从 GitHub Release 的 tgz 安装（npm 包发布中，见 RELEASING.md）
+dsh plugin add ./dsh-overleaf-sync-0.1.0.tgz      # 或 dsh plugin --profile desktop add <absolute-path>.tgz
+```
+
+```bash
 # 本地开发：直接 link 进 profile（改代码后重启 DSH 生效）
 dsh plugin --profile desktop add link:C:/code/dsh-overleaf-sync
 ```
