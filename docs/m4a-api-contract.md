@@ -27,6 +27,7 @@
 | `/overleaf/api/logout` | `{}` | `{}` |
 | `/overleaf/api/projects` | `{ refresh?: boolean }` | `ProjectListEntry[]` |
 | `/overleaf/api/validate-path` | `{ path: string, projectId?: string }` | `{ ok, resolved, problems: string[] }` |
+| `/overleaf/api/pick-directory` | `{ probe?: boolean }` | `{ kind: 'native' \| 'browse' \| 'unavailable', path: string \| null }` |
 | `/overleaf/api/link` | `{ projectId: string, localRoot?: string }` | `LinkRecord` |
 | `/overleaf/api/pull` | `{ projectId?: string, force?: boolean }` | `PullSummary` |
 | `/overleaf/api/push` | `{ projectId?: string, dryRun?: boolean }` | `PushSummary` |
@@ -37,6 +38,12 @@
 | `/overleaf/api/settings.update` | `{ patch: object, expectedRevision?: number }` | 同 `settings.describe` |
 
 `ProjectListEntry` / `LinkRecord` / `PullSummary` / `PushSummary` / `DiffSummary` 的形状与 `src/service.ts` 的同名类型一致，字段名原样透传。
+
+`pick-directory` 由宿主可选的 `ctx.directoryPicker` 支撑（桌面端解析为 `native`，即系统「选择文件夹」对话框）：
+- `probe: true` 只回答能力，不弹窗 —— 页面加载时用它决定显示「选择目录」还是「校验路径」；
+- 不传 `probe` 时弹窗等待用户，`path` 为用户选中的绝对目录，取消为 `null`；
+- `browse` / `unavailable` 表示该宿主没有系统选择框，页面保留手动输入 + `validate-path` 兜底。
+
 
 ### 2.1 StatusSummary（GUI 视角，`src/server/types.ts`）
 

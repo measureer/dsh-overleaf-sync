@@ -14,6 +14,7 @@ import {
   type LoginView,
   type LogoutView,
   type PathValidation,
+  type PickDirectoryResult,
   type ProjectListEntry,
   type SettingsField,
   type SettingsView,
@@ -283,6 +284,17 @@ export function OverleafSettingsSection(props: PanelProps): ReactNode {
     [noteFailure],
   )
 
+  const pickDirectory = useCallback(async (options: { probe?: boolean } = {}): Promise<ApiResult<PickDirectoryResult>> => {
+    // A probe only asks whether the host has a chooser: no busy flag, no toast.
+    if (options.probe !== true) setBusy('pick')
+    setNotice(null)
+    const result = await post<PickDirectoryResult>('pick-directory', options.probe === true ? { probe: true } : {})
+    if (options.probe !== true) setBusy(null)
+    // A host without a chooser is a normal fallback, not an error to toast.
+    if (!result.ok && options.probe !== true) noteFailure(result)
+    return result
+  }, [noteFailure])
+
   const link = useCallback(
     async (payload: { projectId: string; localRoot?: string; force?: boolean }): Promise<ApiResult<LinkRecord>> => {
       setBusy('link')
@@ -392,9 +404,10 @@ export function OverleafSettingsSection(props: PanelProps): ReactNode {
           projects={projects}
           pattern={pattern}
           disabled={!hostReady}
-          busy={busy === 'projects' || busy === 'validate' || busy === 'link'}
+          busy={busy === 'projects' || busy === 'validate' || busy === 'link' || busy === 'pick'}
           onRefresh={() => void refreshProjects()}
           onValidatePath={validatePath}
+          onPickDirectory={pickDirectory}
           onLink={link}
         />
       </RenderBoundary>

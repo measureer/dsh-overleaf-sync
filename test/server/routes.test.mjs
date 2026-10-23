@@ -342,3 +342,41 @@ test('settings.describe exposes only editable fields and settings.update validat
   assert.equal(updated.status, 200)
   assert.equal(updated.body.value.revision, 4)
 })
+
+test('pick-directory returns the native folder choice', async () => {
+  const routes = createOverleafRoutes({
+    service: fakeService(),
+    config,
+    settings: new SettingsBridge(undefined, { config }),
+    cwd: process.cwd(),
+    pickDirectory: async () => ({ kind: 'native', path: '/home/me/Overleaf/Paper' }),
+  })
+  const out = await callRoute(routes, 'pick-directory', {})
+  assert.equal(out.status, 200)
+  assert.deepEqual(out.body.value, { kind: 'native', path: '/home/me/Overleaf/Paper' })
+})
+
+test('pick-directory reports a cancelled native dialog without an error', async () => {
+  const routes = createOverleafRoutes({
+    service: fakeService(),
+    config,
+    settings: new SettingsBridge(undefined, { config }),
+    cwd: process.cwd(),
+    pickDirectory: async () => ({ kind: 'native', path: null }),
+  })
+  const out = await callRoute(routes, 'pick-directory', {})
+  assert.equal(out.status, 200)
+  assert.equal(out.body.value.path, null)
+})
+
+test('pick-directory without a host chooser answers unavailable so the page falls back', async () => {
+  const routes = createOverleafRoutes({
+    service: fakeService(),
+    config,
+    settings: new SettingsBridge(undefined, { config }),
+    cwd: process.cwd(),
+  })
+  const out = await callRoute(routes, 'pick-directory', {})
+  assert.equal(out.status, 200)
+  assert.deepEqual(out.body.value, { kind: 'unavailable', path: null })
+})

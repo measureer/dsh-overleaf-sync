@@ -1,8 +1,16 @@
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ReactNode } from 'react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
-import type { ApiResult, LinkRecord, PathValidation, ProjectListEntry, SettingsField, StatusSummary } from './api'
+import type {
+  ApiResult,
+  LinkRecord,
+  PathValidation,
+  PickDirectoryResult,
+  ProjectListEntry,
+  SettingsField,
+  StatusSummary,
+} from './api'
 import { FieldControl, FieldRow, Hint, SectionCard, SwitchRow, type DraftValue, type Translate } from './fields'
 
 /** Keys rendered by the "sync strategy" block, in order. */
@@ -207,6 +215,8 @@ export function ProjectBlock(props: {
   busy: boolean
   onRefresh: () => void
   onValidatePath: (payload: { path: string; projectId?: string }) => Promise<ApiResult<PathValidation>>
+  /** Opens the host's folder chooser; `kind` says whether that is possible at all. */
+  onPickDirectory: (options?: { probe?: boolean }) => Promise<ApiResult<PickDirectoryResult>>
   onLink: (payload: { projectId: string; localRoot?: string; force?: boolean }) => Promise<ApiResult<LinkRecord>>
 }): ReactNode {
   const { t } = props
@@ -215,6 +225,26 @@ export function ProjectBlock(props: {
   const [root, setRoot] = useState('')
   const [validation, setValidation] = useState<PathValidation | null>(null)
   const [force, setForce] = useState<{ path: string; message: string } | null>(null)
+  /** Set once the host answers that it has no OS chooser: show the manual fallback instead. */
+  /**
+   * `null` = not asked yet, `''` = the host has the OS chooser, a string = why
+   * the row falls back to manual input.
+   */
+  const [pickerBlocked, setPickerBlocked] = useState<string | null>(null)
+
+  // Ask once whether this host can open an OS folder dialog, so the row shows
+  // either 「选择目录」 or the manual 「校验路径」 fallback from the start.
+  useEffect(() => {
+    let alive = true
+    void props.onPickDirectory({ probe: true }).then((result) => {
+      if (!alive || !result.ok) return
+      setPickerBlocked(result.value.kind === 'native' ? '' : t('pickerUnavailable'))
+    })
+    return () => {
+      alive = false
+    }
+    // Probe once per mount on purpose: the capability is fixed for the host's life.
+  }, [])
 
   const selectedId = projectId.length > 0 ? projectId : (current?.projectId ?? '')
   const selected = props.projects.find((entry) => entry.id === selectedId)
@@ -223,10 +253,11 @@ export function ProjectBlock(props: {
 
   const canLink = selectedId.length > 0 && !props.disabled && !props.busy
 
-  const doValidate = async (): Promise<void> => {
+  const doValidate = async (value?: string): Promise<void> => {
     setForce(null)
+    const target = (value ?? root).trim()
     const result = await props.onValidatePath({
-      path: root.trim().length > 0 ? root.trim() : preview,
+      path: target.length > 0 ? target : preview,
       ...(selectedId.length > 0 ? { projectId: selectedId } : {}),
     })
     if (result.ok) {
@@ -235,6 +266,27 @@ export function ProjectBlock(props: {
     } else {
       setValidation({ ok: false, resolved: '', problems: [result.message] })
     }
+  }
+
+  /**
+   * Open the host's folder chooser. A `native` answer is the OS dialog and the
+   * picked folder becomes the draft (then validated in place); `browse` and
+   * `unavailable` mean this host cannot show one, so the row falls back to the
+   * manual input plus 「校验路径」.
+   */
+  const doPick = async (): Promise<void> => {
+    const result = await props.onPickDirectory()
+    if (!result.ok) return
+    if (result.value.kind !== 'native') {
+      setPickerBlocked(t('pickerUnavailable'))
+      return
+    }
+    setPickerBlocked(null)
+    if (result.value.path === null) return
+    setRoot(result.value.path)
+    setValidation(null)
+    setForce(null)
+    await doValidate(result.value.path)
   }
 
   const doLink = async (forceLink: boolean): Promise<void> => {
@@ -306,9 +358,20 @@ export function ProjectBlock(props: {
                 setForce(null)
               }}
             />
-            <Button variant="outline" size="sm" disabled={props.disabled || props.busy} onClick={() => void doValidate()}>
-              {t('validateButton')}
-            </Button>
+            {pickerBlocked !== null && pickerBlocked.length > 0 ? (
+              <Button variant="ghost" size="sm" disabled={props.disabled || props.busy} onClick={() => void doValidate()}>
+                {t('validateButton')}
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={props.disabled || props.busy}
+                onClick={() => void doPick()}
+              >
+                {props.busy ? t('picking') : t('pickButton')}
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -324,6 +387,7 @@ export function ProjectBlock(props: {
           </div>
         }
       />
+      {pickerBlocked === null ? null : <Hint tone="warn">{pickerBlocked}</Hint>}
       {validation === null ? null : validation.ok ? (
         <Hint tone="ok">{t('pathOk', { path: validation.resolved })}</Hint>
       ) : (

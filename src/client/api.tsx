@@ -99,6 +99,18 @@ export interface PathValidation {
   problems: string[]
 }
 
+/**
+ * `pick-directory` → what the host's folder chooser returned.
+ *
+ * `kind` tells the page whether the OS dialog is available at all: on the
+ * desktop composition it is `native`, while a host that only offers in-app
+ * browse primitives answers `browse` and the page keeps its manual input.
+ */
+export interface PickDirectoryResult {
+  kind: 'native' | 'browse' | 'unavailable'
+  path: string | null
+}
+
 /** `login` → login view. */
 export interface LoginView {
   baseUrl: string

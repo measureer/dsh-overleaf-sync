@@ -29,7 +29,7 @@ import {
   sendResult,
 } from './envelope.js'
 import type { SettingsBridge } from './settingsBridge.js'
-import type { ConflictEntry, JournalEntryView, PathValidation, StatusSummary } from './types.js'
+import type { ConflictEntry, JournalEntryView, PathValidation, PickDirectoryResult, StatusSummary } from './types.js'
 
 /** Structural copy of the web server's route record. */
 export interface WebRoute {
@@ -44,6 +44,12 @@ export interface RouteDeps {
   settings: SettingsBridge
   /** Session working directory, for relative paths in `link`. */
   cwd: string
+  /**
+   * Host-side folder chooser, when the composition has one. Absent on a host
+   * without `directoryPicker`; `pick-directory` then answers `unavailable` and
+   * the page keeps its manual input.
+   */
+  pickDirectory?: (probe?: boolean) => Promise<PickDirectoryResult>
 }
 
 const PREFIX = '/overleaf/api/'
@@ -61,6 +67,7 @@ export function createOverleafRoutes(deps: RouteDeps): WebRoute[] {
     ['logout', () => logoutView(deps)],
     ['projects', (body) => projectsView(deps, body)],
     ['validate-path', (body) => validatePath(deps, body)],
+    ['pick-directory', (body) => pickDirectoryView(deps, body)],
     ['link', (body) => linkView(deps, body)],
     ['pull', (body) => pullView(deps, body)],
     ['push', (body) => pushView(deps, body)],
@@ -276,6 +283,22 @@ async function isLinkedTo(projectId: string, dir: string): Promise<boolean> {
 }
 
 // -------------------------------------------------------------- path checks
+
+/**
+ * Open the host's folder chooser and answer with what it returned.
+ *
+ * The desktop composition mounts `directory-picker-auto`, which resolves to the
+ * `native` backend on a loopback Windows host, so this is the ordinary OS
+ * "select folder" dialog. A remote/browser-only host resolves to `browse`
+ * instead: that backend only serves listing primitives, so the page is told to
+ * keep its manual input rather than being shown a broken button.
+ */
+async function pickDirectoryView(deps: RouteDeps, body: Record<string, unknown>): Promise<PickDirectoryResult> {
+  if (deps.pickDirectory === undefined) return { kind: 'unavailable', path: null }
+  // `probe` answers the capability without opening anything, so the page can
+  // decide whether to offer the button at all before the user clicks it.
+  return deps.pickDirectory(body.probe === true)
+}
 
 async function validatePath(deps: RouteDeps, body: Record<string, unknown>): Promise<PathValidation> {
   const raw = requireString(body, 'path')

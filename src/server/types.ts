@@ -62,6 +62,20 @@ export interface SettingsView {
   fields: SettingsFieldView[]
 }
 
+/**
+ * Outcome of `pick-directory`.
+ *
+ * - `native`: the host's OS folder dialog was shown; `path` is the picked
+ *   absolute folder or `null` when the operator cancelled.
+ * - `browse`: the host only offers in-app browse primitives, so the page has to
+ *   fall back to typing the path (and `path` is always `null`).
+ * - `unavailable`: no directory-picker service in this host at all.
+ */
+export interface PickDirectoryResult {
+  kind: 'native' | 'browse' | 'unavailable'
+  path: string | null
+}
+
 export interface PathValidation {
   ok: boolean
   /** Absolute, symlink-resolved directory the link would use. */

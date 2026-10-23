@@ -23,6 +23,7 @@ import type { OverleafSyncService } from '../service.js'
 import { describeError, recordDiagnostic } from './diagnostics.js'
 import { createOverleafRoutes, type WebRoute } from './routes.js'
 import { SettingsBridge, type SettingsServiceLike } from './settingsBridge.js'
+import type { PickDirectoryResult } from './types.js'
 
 export interface ServerDeps {
   service: OverleafSyncService
@@ -35,6 +36,46 @@ export interface ServerDeps {
 /** The slice of `ctx.webServer` we use. */
 export interface WebServerLike {
   register(route: WebRoute): () => void
+}
+
+/**
+ * The slice of `ctx.directoryPicker` we use (see `@deepseek-ai/dsh-host-directory-picker`).
+ *
+ * The capability is a discriminated seam: `native` opens one OS chooser on the
+ * host display, `browse` only serves listing primitives for an in-app browser.
+ */
+export interface DirectoryPickerLike {
+  capability(): { kind: string; pick?: (signal: AbortSignal) => Promise<string | null> }
+}
+
+/** How long the operator may leave the folder dialog open before we give up. */
+const PICK_TIMEOUT_MS = 15 * 60_000
+
+/**
+ * Turn `ctx.directoryPicker` into the route's chooser.
+ *
+ * Read lazily on every call so a service that appears after `apply()` still
+ * works, and never through a declared `inject` — the picker is optional.
+ */
+function createDirectoryPicker(ctx: Context): ((probe?: boolean) => Promise<PickDirectoryResult>) | undefined {
+  return async (probe = false) => {
+    const picker = readService<DirectoryPickerLike>(ctx, 'directoryPicker')
+    if (picker === undefined) return { kind: 'unavailable', path: null }
+    try {
+      const capability = picker.capability()
+      if (capability.kind !== 'native' || typeof capability.pick !== 'function') {
+        recordDiagnostic('picker-non-native', { kind: String(capability.kind) })
+        return { kind: 'browse', path: null }
+      }
+      if (probe) return { kind: 'native', path: null }
+      const picked = await capability.pick(AbortSignal.timeout(PICK_TIMEOUT_MS))
+      recordDiagnostic('picker-native', { picked: picked !== null })
+      return { kind: 'native', path: picked ?? null }
+    } catch (error) {
+      recordDiagnostic('picker-failed', { error: describeError(error) })
+      throw error
+    }
+  }
 }
 
 /**
@@ -56,7 +97,8 @@ export function registerOverleafApi(ctx: Context, deps: ServerDeps): () => void 
         config: deps.config,
         ...(deps.namespace === undefined ? {} : { namespace: deps.namespace }),
       })
-      const routes = createOverleafRoutes({ ...deps, settings })
+      const pickDirectory = createDirectoryPicker(ctx)
+      const routes = createOverleafRoutes({ ...deps, settings, pickDirectory })
       for (const route of routes) disposers.push(webServer.register(route))
       registered = true
       recordDiagnostic('routes-registered', { how, count: routes.length })
@@ -150,4 +192,11 @@ function readSettings(ctx: Context): SettingsServiceLike | undefined {
 
 export { SettingsBridge } from './settingsBridge.js'
 export { createOverleafRoutes } from './routes.js'
-export type { StatusSummary, ConflictEntry, SettingsView, SettingsFieldView, PathValidation } from './types.js'
+export type {
+  StatusSummary,
+  ConflictEntry,
+  SettingsView,
+  SettingsFieldView,
+  PathValidation,
+  PickDirectoryResult,
+} from './types.js'
