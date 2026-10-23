@@ -116,3 +116,37 @@ test('registered handler answers with the envelope', async () => {
   assert.equal(body.ok, true)
   assert.equal(body.value.authenticated, false)
 })
+
+test('optional services are read through ctx.get, not the guarded property', () => {
+  // Cordis throws `cannot get property "webServer" without inject` for a plugin
+  // that did not declare a hard dependency, so the GUI half must use ctx.get.
+  const registered = []
+  const webServer = {
+    register(route) {
+      registered.push(route)
+      return () => {}
+    },
+  }
+  const ctx = {
+    inject(_names, callback) {
+      callback(ctx)
+    },
+    effect(execute) {
+      const dispose = execute()
+      return () => dispose?.()
+    },
+    get(name) {
+      return name === 'webServer' ? webServer : undefined
+    },
+  }
+  for (const guarded of ['webServer', 'settings']) {
+    Object.defineProperty(ctx, guarded, {
+      get() {
+        throw new Error(`cannot get property "${guarded}" without inject`)
+      },
+    })
+  }
+
+  assert.doesNotThrow(() => registerOverleafApi(ctx, { service: fakeService(), config, cwd: process.cwd() }))
+  assert.equal(registered.length, 13)
+})

@@ -176,6 +176,7 @@ export function apply(ctx: Context, config: z.infer<typeof Config>) {
 要点（实测自 DSH 0.2.1-rc.2 的官方包；完整取证见 [插件 API 笔记](dsh-plugin-api-notes.md)）：
 
 - **形状**：Cordis 对象插件 = 具名导出 `name` / `inject` / `Config` + `apply(ctx, config)`；`inject` 是**模块级服务依赖数组**（`dsh-tool-fs` 用 `['tools','fs','systemPrompt','workingDirectory']`），缺服务则不加载；`ctx.inject(deps, cb)` 是等价的动态写法，用于可选项。
+- **可选服务只能 `ctx.get(name)`**：Cordis 对未在 `inject` 里声明的服务做属性访问会抛 `cannot get property "X" without inject`（2026-10-23 实测）。GUI 半侧需要的 `webServer` / `settings` 属可选，模块级 `inject` 仍只声明 `['tools']`；其余一律 `ctx.get()` + 兜底 `try/catch`，`ctx.inject(deps, cb)` 只用于「服务就绪后再注册」的延迟路径。
 - **注册/卸载**：`ctx.tools.register(...)` 返回**精确 disposer**（只注销这一个工具）；同层重名与保留名 `run_code` 会抛错。用 `ctx.effect(fn, "label")` 托管，卸载时逆序清理。
 - **参数 DSL**（自研，不是 zod）：`string/number/integer/boolean/null/array/object/json` + exact-one `oneOf`；`object` **必须显式给 `additionalProperties: boolean`**；`required` 只能字面 `true`；注解键仅 `description/title/default/examples`，其它键直接报 `is not supported by the value schema DSL`。参数在进 `execute` 前校验，违规是 `ToolArgsError`。
 - **output**：`{ schema, render(args, value) }`，`schema` 是权威值，`render` 只产 UI 内容；`presentCall/presentResult` 仅供 Host 本地消费者，Web 端卡片由 `tool.call.toolview` 从 raw args 推导。

@@ -48,6 +48,11 @@
 - 已确认存在的服务名（asar 内 `super(ctx, "…")` 扫描，节选）：`tools, fs, systemPrompt, workingDirectory, attachments, sessions, agents, agentLoop, llm, webServer, web, commands, skills, slots, approval, sandbox, sandboxPolicy, settingsController, settingsSchema, commands, jobs, subagents, workspaces, workspaceFiles, pluginManager, pluginPackages, sessionProjections, sessionSkillCatalog, terminalController, workingDirectory, storage, spillStore, timer, cordisInspect, remote`。完整 90+ 项可重跑同一条扫描。
 - 官方插件 `inject` 实例：`dsh-tool-fs` → `["tools","fs","systemPrompt","workingDirectory"]`；`dsh-tool-todo` → `["tools","sessionProjections"]`；`dsh-remote-web` → `["webServer"]`。
 
+> **服务读取的硬约束（2026-10-23 实测踩坑）**：Cordis 对**未通过 `inject` 声明**的服务做属性访问会直接抛 `cannot get property "<name>" without inject`（不是返回 undefined）。因此：
+> - 插件需要可选服务（`webServer`、`settings`…）时，**只能用 `ctx.get(name)` 读取**（不存在时返回 `undefined`），绝不能写 `ctx.webServer`；
+> - 把这类读取包进 `try/catch` 并准备「属性读取」兜底，才能在伪 Context 的单元测试里也跑通；
+> - 该异常发生在 `apply()` 里会**整体中止插件加载**，且不显示在工具列表上，只能靠 diagnostics 或克隆 profile 复现。
+
 ## 5. 配置 schema 与热重载
 
 - 用 schemastery：`import z from "@deepseek-ai/schemastery"`；`z.object({...})`、`.default(v)`、`.required()`（与 default 互斥）、`.description()`（`schemastery/README.md:42,241-253`）。样本：`dsh-tool-fs/lib/index.js:1194-1202`。
@@ -118,3 +123,20 @@ window.__ModuleLoader__.load({ id: 'dsh-overleaf-sync', factory: (require) => {
 2. schemastery `.volatile()` 写法；设置页字段（`ctx.configForms`）如何从 Config 自动生成。
 3. `dsh plugin add` 确切子命令与参数；`dsh-market` 上架流程。
 4. 出网请求方式：服务名扫描结果中**没有** `http`（只有 `remote`、`llm`、`webServer`）；客户端官方构建工具链（tsdown/pnpm 脚本）与 `dsh.client.external` 白名单细节。
+
+## 11. 运行时排障剧本（已验证可用）
+
+1. **别动用户的 profile**：CLI 跑不了 `desktop`（报 `profile "desktop" is managed exclusively by the Electron application`）。克隆一份再启动：
+
+   ```bash
+   mkdir -p ~/.dsh/profiles/otcheck/node_modules
+   cp ~/.dsh/profiles/desktop/{package.json,cordis.patch.yml} ~/.dsh/profiles/otcheck/
+   rm -rf ~/.dsh/profiles/otcheck/node_modules/dsh-overleaf-sync
+   cp -r ~/.dsh/profiles/desktop/node_modules/dsh-overleaf-sync ~/.dsh/profiles/otcheck/node_modules/
+   sed -i 's#"dsh-overleaf-sync": *"link:[^"]*"#"dsh-overleaf-sync": "file:///C:/code/dsh-overleaf-sync"#' ~/.dsh/profiles/otcheck/package.json
+   ```
+
+2. **另起端口跑**：`dsh --profile otcheck --patch <disable-overlay> --port 2001 web`；启动日志会打印一个 cookie（`paste this cookie into the request to get access`）。
+3. **逐路由探测**：先 `GET /` 得 401（说明鉴权正常），再带 cookie `POST /overleaf/api/status`：返回 JSON 信封 = 注册成功；返回 405 = **路由根本没注册**（Host 半侧没跑到）。
+4. **对齐版本**：克隆树的模块版本必须与用户树一致（从用户日志 `正在加载插件 …@版本` 抄版本再补装），否则结论会被版本差异污染。
+5. **两个进程可共存**：不同 `--port` 与 `DSH_HOME` 可并存；克隆 profile 默认绑定 desktop 的 `bot/default`，验证时不要在那里跑写操作。

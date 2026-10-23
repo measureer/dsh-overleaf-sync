@@ -65,7 +65,7 @@ export function registerOverleafApi(ctx: Context, deps: ServerDeps): () => void 
     }
   }
 
-  const direct = (ctx as unknown as { webServer?: WebServerLike }).webServer
+  const direct = readWebServer(ctx)
   recordDiagnostic('register-overleaf-api', { webServerAtApply: direct !== undefined })
   if (direct !== undefined) {
     ctx.effect(() => {
@@ -79,7 +79,7 @@ export function registerOverleafApi(ctx: Context, deps: ServerDeps): () => void 
     ctx.inject(['webServer'], (sctx) => {
       recordDiagnostic('webServer-inject-fired', {})
       sctx.effect(() => {
-        install((sctx as unknown as { webServer?: WebServerLike }).webServer, 'injected')
+        install(readWebServer(sctx), 'injected')
         return () => {
           for (const dispose of disposers.splice(0).reverse()) dispose()
           registered = false
@@ -113,21 +113,39 @@ export function registerOverleafApi(ctx: Context, deps: ServerDeps): () => void 
   }
 }
 
-/** `ctx.webServer` or the same service reached through `ctx.get`. */
-function readWebServer(ctx: Context): WebServerLike | undefined {
-  const own = (ctx as unknown as { webServer?: WebServerLike }).webServer
-  if (own !== undefined) return own
-  const getter = (ctx as unknown as { get?: (name: string) => unknown }).get
-  if (typeof getter !== 'function') return undefined
+/**
+ * Read an optional service without declaring a hard `inject` dependency.
+ *
+ * Cordis throws on `ctx.<service>` reads for plugins that did not inject the
+ * name, so a GUI half that must stay optional cannot touch the property
+ * directly. `ctx.get(name)` is the sanctioned escape hatch, and the property
+ * read stays as a fallback for hosts where `get` is unavailable.
+ */
+function readService<T>(ctx: Context, name: string): T | undefined {
+  const getter = (ctx as unknown as { get?: (service: string) => unknown }).get
+  if (typeof getter === 'function') {
+    try {
+      const value = getter.call(ctx, name)
+      if (value !== undefined) return value as T
+    } catch {
+      // fall through to the property read
+    }
+  }
   try {
-    return getter.call(ctx, 'webServer') as WebServerLike | undefined
+    return (ctx as unknown as Record<string, unknown>)[name] as T | undefined
   } catch {
     return undefined
   }
 }
 
+/** `ctx.webServer` without the inject requirement. */
+function readWebServer(ctx: Context): WebServerLike | undefined {
+  return readService<WebServerLike>(ctx, 'webServer')
+}
+
+/** `ctx.settings` without the inject requirement. */
 function readSettings(ctx: Context): SettingsServiceLike | undefined {
-  return (ctx as unknown as { settings?: SettingsServiceLike }).settings
+  return readService<SettingsServiceLike>(ctx, 'settings')
 }
 
 export { SettingsBridge } from './settingsBridge.js'
