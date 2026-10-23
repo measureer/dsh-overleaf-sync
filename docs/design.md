@@ -1005,7 +1005,7 @@ ctx.slots.inject('settings.section', () => ctx.slots.register({
 | ① 账号 | Cookie / CSRF 输入 | 写凭据 | `POST /overleaf/api/login` | 提交后立即清空输入框，只回显「已设置」 |
 | ① 账号 | 退出 | 写凭据 | `POST /overleaf/api/logout` | 二次确认 |
 | ② 项目 | 项目下拉 | 只读远端 | `POST /overleaf/api/projects` | 名称 + 最后修改时间 |
-| ② 项目 | 本地目录 | 动作 | `POST /overleaf/api/pick-directory` → `link` | 「选择目录」拉起宿主系统对话框（`ctx.directoryPicker`，桌面端 `native`）；无选择框的宿主降级为手动输入 + `validate-path` |
+| ② 项目 | 本地目录 | 动作 | `POST /overleaf/api/pick-directory` → `link` | 「选择目录」拉起系统「浏览文件夹」对话框：优先用宿主 `ctx.directoryPicker` 的 `native` 能力；若该 seam 被第三方插件切成 `browse`（DSH Desktop 上 `dsh-remote-web` 会这样做，以便手机端也能选目录），Windows 宿主改用插件自带的 PowerShell `FolderBrowserDialog` 兜底；两者都没有时降级为手动输入 + `validate-path`。页面加载时先 `probe`，据此决定显示「选择目录」还是「校验路径」 |
 | ② 项目 | 默认目录 | 动作 | 同上，`localRoot` 省略 | 按 `localRootPattern` 展开 |
 | ③ 策略 | 单选 / 开关 | 配置 | `defaultStrategy`、`confirmRemoteWrite`、`git.autoInit`、`git.initialCommitMessage` | 与 `Config` 一一对应 |
 | ④ 高级 | 数值 / 文本 | 配置 | `baseUrl`、`watch.*`、`journal.*`、`debug` | 默认折叠，减少误改 |
