@@ -107,7 +107,5 @@
   "syncDryRun": "Preview: {pushed} file(s) would be pushed (nothing written)",
   "syncConflicts": "{count} conflict copy/copies created (*.remote-<timestamp>) — merge them by hand",
   "syncSkipped": "{count} file(s) skipped",
-  "linkedAndPulled": "Linked → pulled {count} file(s) into {root}",
-  "linkedNoFiles": "Linked, but the project has no files to pull.",
-  "linkedPullFailed": "Linked, but the first pull failed: {reason}"
+  "linkedOnly": "Linked to {root} — press Pull below to download the remote files."
 }

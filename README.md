@@ -59,7 +59,8 @@ dsh plugin --profile desktop add link:C:/code/dsh-overleaf-sync
 - **Cookie 原样透传**：不解析 cookie 名，`overleaf_session2`（官方/新版 CE）与 `sharelatex.sid`（老版 CE）都能用；CSRF 从页面 `ol-csrfToken` meta 读取。
 - **协议回退**：socket.io 握手先试 `joinProject` v1，被拒后自动切 v2（`?projectId=…`）。
 - **子路径部署**：`https://host/overleaf/` 这类实例，HTTP 请求跟随 baseUrl 子路径，socket.io 自动用 `/overleaf/socket.io/`。
-- **已知限制**：客户端是 socket.io-client v4（Engine.IO v4），老到只支持 socket.io 2.x 的实例连不上；登录仍需从浏览器复制 Cookie（不实现账号密码/SSO 登录）。
+- **老协议自建实例**：不少自建实例仍是 socket.io **0.9**（如 `latex.cstcloud.cn`）。插件会自动探测（`/socket.io/1/` 握手）并切到零依赖的 0.9 客户端 （`src/transport/legacy.ts`，含同 sid 重试、自动 join、心跳），上层 API 不变。注意这类服务器**同一项目同一账号只允许一个 socket**：浏览器里开着该项目时，插件的 pull/push 会等它释放，错误信息会提示先关掉标签页。
+- **已知限制**：登录仍需从浏览器复制 Cookie（不实现账号密码/SSO 登录）；socket.io 2.x/3.x 中间代（既能连 4 又不像 0.9 的自定义分支）未单独适配。
 
 ## 状态与安全
 

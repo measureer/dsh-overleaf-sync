@@ -889,6 +889,33 @@ sequenceDiagram
 | 粘贴的 cookie 无效（GUI/工具登录） | `whoami` 失败或 401 | 不写凭据，提示重新复制 | `E_AUTH_INVALID` |
 | 绑定目录不可用（不存在/只读/在项目外） | Host 侧路径校验 | 拒绝绑定，返回具体原因 | `E_LOCAL_DIR_INVALID` |
 | 设置页写回撞上并发修改 | `settings.update` 的 `expectedRevision` 不匹配 | 不覆盖，要求刷新后重试 | `E_SETTINGS_CONFLICT`（HTTP 409） |
+| 服务器用 socket.io 0.9 老协议 | 握手探测命中 `sid:hb:close:transports` | 切 legacy 传输层（见 §12.1） | 自动，不打扰用户 |
+
+### 12.1 服务器代际差异：socket.io v4 与 v0.9
+
+overleaf.com 与新的社区版走 **socket.io v4 / Engine.IO v4**；不少国内自建实例（含
+`latex.cstcloud.cn`，服务端分发的客户端是 `Socket.IO.min.js build:0.9.17-overleaf-5`）
+仍是 **socket.io 0.9**。两者在线上协议层完全不兼容：v4 客户端连 0.9 服务端时，
+握手阶段就失败，`io()` 永远不产生 `connect`，于是我们看到的症状是
+「`joinProject` did not answer within 15000 ms」——**报的是超时，坏的是协议**。
+
+区分办法（一次只读探测，不依赖任何第三方包）：
+
+| 探测 | v4 服务器 | 0.9 服务器 |
+| --- | --- | --- |
+| `GET <base>/socket.io/?EIO=4&transport=polling` | `0{"sid":…}` | `Welcome to socket.io.`（静态欢迎文本） |
+| `GET <base>/socket.io/1/?projectId=<id>&t=<ms>` | 404 / 非该形态 | `sid:60:60:websocket,xhr-polling` |
+| `GET <base>/socket.io/socket.io.js` | 现代构建 | `build:0.9.17-overleaf-5` |
+
+0.9 路线的实测要点（已在该站跑通，协议细节见 [legacy-socket.md](legacy-socket.md)）：
+
+1. 握手 URL **必须带 `projectId`**：`/socket.io/1/?projectId=<id>&t=<ms>`，返回 `sid:60:60:websocket,xhr-polling`；
+2. 升级到 `wss://<host>/socket.io/1/websocket/<sid>`，请求头带同一个 Cookie 与 `Origin`；
+3. 升级成功后**服务端自动**发 `1::` 并直接推 `joinProjectResponse`（该 fork 既不要客户端发 `joinProject`，也不用 ack 回数据），每 join 一次换一个新 `publicId`；客户端按「先吃自动推送、再回落标准流程」实现，两种形态都能完成；
+4. `joinDoc` / `applyOtUpdate` 走 0.9 的 ack 帧 `6:::<id>+[args]`：`joinDoc` 的 ack 是 **6 元素** `[null, string[] lines, version, [], {}, 'sharejs-text-ot']`，行是**数组**（不是拼接字符串），单帧可达 ~98 KB（64 位长度路径）；
+5. 心跳：服务端 `hb=60`，60 s 无流量即断；客户端 20 s 发一次 `2::` 只是保险，实测不发也能撑过 45 s；
+6. 该站约 **1/4 的 upgrade 会被 `7:::1+0`（`client not handshaken` / advice `reconnect`）拒掉，但 sid 仍然有效**——必须同 sid 重试（≤4 次、75 ms 间隔），再退回重新握手；且**同一项目同一账号只允许一个 socket**，用户浏览器开着该项目时插件连不上，这是服务端限制而非插件缺陷；
+7. 实现：`src/transport/legacy.ts`（零新依赖，纯 `node:https` + `node:crypto` 手写 RFC6455，含同 sid 重试、自动 join、心跳、ack 表、`AbortSignal` 预算）+ `src/transport/legacyTransport.ts`（把这些映射到 `OverleafTransport` 的 `joinProject/joinDoc/leaveDoc/applyOtUpdate/onRemoteUpdate/close`）；`src/transport/index.ts` 的 `createTransport` 先 `detectSocketProtocol()` 探测，再选对应实现，并给 legacy 路线加 90 s 总预算（超时给出「关闭浏览器里该项目的标签页后重试」的提示）。
 
 ---
 
@@ -1006,13 +1033,24 @@ ctx.slots.inject('settings.section', () => ctx.slots.register({
 | ① 账号 | 退出 | 写凭据 | `POST /overleaf/api/logout` | 二次确认 |
 | ② 项目 | 项目下拉 | 只读远端 | `POST /overleaf/api/projects` | 名称 + 最后修改时间 |
 | ② 项目 | 本地目录 | 动作 | `POST /overleaf/api/pick-directory` → `link` | 「选择目录」拉起系统「浏览文件夹」对话框：优先用宿主 `ctx.directoryPicker` 的 `native` 能力；若该 seam 被第三方插件切成 `browse`（DSH Desktop 上 `dsh-remote-web` 会这样做，以便手机端也能选目录），Windows 宿主改用插件自带的 PowerShell `FolderBrowserDialog` 兜底；两者都没有时降级为手动输入 + `validate-path`。页面加载时先 `probe`，据此决定显示「选择目录」还是「校验路径」 |
-| ③ 同步 | 拉取 / 推送 / 预演 | 动作 | `POST /overleaf/api/pull` · `/push` | 绑定后立即自动首拉（见 §14.6.2）；之后手动「拉取」「推送预演」「推送」（真写需二次确认，送 `confirm: true`）。watch 未实现，故文案明确写「后台自动监听尚未启用」，避免用户空等 |
+| ③ 同步 | 拉取 / 推送 / 预演 | 动作 | `POST /overleaf/api/pull` · `/push` | **绑定只登记配对，不拉文件**：绑定成功后提示「点拉取」，由用户显式触发首次下载。理由见 §14.6.2；之后「拉取」「推送预演」「推送」（真写需二次确认，送 `confirm: true`）。watch 未实现，故文案明确写「后台自动监听尚未启用」，避免用户空等 |
 | ② 项目 | 默认目录 | 动作 | 同上，`localRoot` 省略 | 按 `localRootPattern` 展开 |
 | ③ 策略 | 单选 / 开关 | 配置 | `defaultStrategy`、`confirmRemoteWrite`、`git.autoInit`、`git.initialCommitMessage` | 与 `Config` 一一对应 |
 | ④ 高级 | 数值 / 文本 | 配置 | `baseUrl`、`watch.*`、`journal.*`、`debug` | 默认折叠，减少误改 |
 
 > 所有接口一律 `POST` + JSON（含只读的 `status`/`projects`）：同源 `fetch` 无需处理
 > CORS 预检差异，路由实现也只有一条代码路径。信封与错误码见 `docs/m4a-api-contract.md`。
+
+#### 14.3.3.1 为什么「绑定」不顺手拉取
+
+早期实现点完「绑定」会紧接着自动发一次 `pull`，把首拉的结果一起报出来。用户实测后要求改掉
+（m02525）。三条理由：
+
+1. **语义混淆**：绑定 = 登记「远端项目 ↔ 本地目录」这一对关系，是**零风险、瞬时**的；拉取会写本地磁盘、可能覆盖已有文件、耗时取决于网络。两件事合在一起，任何一侧出错都只能笼统报「绑定失败」。
+2. **失败噪音**：自建服务器可能在 socket 层就不可达（见 §12.1），自动首拉会让「绑定成功」这件事被一次超时掩盖，用户看到的是错误而不是已经建立好的配对。
+3. **可预期性**：用户按下什么就发生什么。绑定后提示「点拉取开始下载」，把决定权交回用户；`pull` 也仍然可以单独重试，不需要重新绑定。
+
+因此 `link` 只写 `link.json`，客户端绑定成功后只弹一条提示，不发任何拉取请求。
 
 #### 14.3.4 目录选择：没有原生选择器，用「输入 + 服务端校验」
 

@@ -347,24 +347,10 @@ export function OverleafSettingsSection(props: PanelProps): ReactNode {
       setBusy(null)
       if (result.ok) {
         await loadStatus()
-        // Linking only records the pair; the first sync is what the user is
-        // actually waiting for, so pull right away and report what landed.
-        setBusy('pull')
-        const pulled = await post<PullSummary>('pull', { projectId: result.value.projectId, force: false })
-        setBusy(null)
-        if (pulled.ok) {
-          setPullResult(pulled.value)
-          setNotice({
-            tone: pulled.value.pulled.length > 0 ? 'ok' : 'warn',
-            text:
-              pulled.value.pulled.length > 0
-                ? t('linkedAndPulled', { count: pulled.value.pulled.length, root: pulled.value.localRoot })
-                : t('linkedNoFiles'),
-          })
-        } else {
-          setNotice({ tone: 'warn', text: t('linkedPullFailed', { reason: describeFailure(pulled) }) })
-        }
-        await loadStatus()
+        // Linking only records the pair; pulling stays an explicit action.
+        // A slow or failing pull on a self-hosted server must not look like
+        // "the link failed", and nobody expects files to appear unasked.
+        setNotice({ tone: 'ok', text: t('linkedOnly', { root: result.value.localRoot }) })
         return result
       }
       // The force confirmation is rendered by the project block; keep it quiet here.

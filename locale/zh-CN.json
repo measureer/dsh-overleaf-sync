@@ -107,7 +107,5 @@
   "syncDryRun": "预演：将推送 {pushed} 个文件（尚未写入）",
   "syncConflicts": "生成了 {count} 个冲突副本（*.remote-<时间戳>），请手工合并",
   "syncSkipped": "{count} 个文件被跳过",
-  "linkedAndPulled": "已绑定 → 拉取完成：{count} 个文件写入 {root}",
-  "linkedNoFiles": "已绑定，但远端没有可拉取的文件。",
-  "linkedPullFailed": "已绑定，但首次拉取失败：{reason}"
+  "linkedOnly": "已绑定到 {root} —— 点下面的「拉取」把远端文件下载到本地。"
 }

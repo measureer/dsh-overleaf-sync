@@ -13,6 +13,7 @@ import {
   uniquePath,
 } from './core/paths.js'
 import { atomicWrite, ensureDir, normalizeEol, readTextIfExists, sha256 } from './core/fsUtil.js'
+import { atomicWriteBytes, readBytesIfExists, sha256Bytes } from './core/files.js'
 import { ensureGitRepository } from './core/gitInit.js'
 import { loadIgnoreMatcher } from './core/ignore.js'
 import { appendJournal } from './core/journal.js'
@@ -150,6 +151,12 @@ export interface StatusSummary {
 /** A document on the remote side, with its project-relative path. */
 interface RemoteDoc {
   docId: string
+  relPath: string
+}
+
+/** A binary file on the remote side, with its project-relative path. */
+interface RemoteFile {
+  fileId: string
   relPath: string
 }
 
@@ -441,6 +448,58 @@ export class OverleafSyncService {
         await this.journal(link.projectId, { event: 'pull', path: relPath, v: content.version, ok: true })
       }
 
+      // Binary files (images, PDFs, …) travel over plain HTTP instead of
+      // document OT, so they are fetched after the documents (§5.4).
+      if (!input.dryRun && snapshot.files.length > 0) {
+        const http = new OverleafHttp(credential)
+        for (const file of this.collectFiles(snapshot)) {
+          const relPath = file.relPath
+          if (wanted.size > 0 && !wanted.has(relPath) && !wanted.has(file.fileId)) continue
+          if (ignore(relPath)) {
+            summary.skipped.push({ path: relPath, reason: 'ignored' })
+            continue
+          }
+          const target = path.join(link.localRoot, ...relPath.split('/'))
+          const previous = store.get(relPath)
+          let bytes: Uint8Array
+          try {
+            bytes = await http.downloadFile(link.projectId, file.fileId, ctx.signal)
+          } catch (error) {
+            warnings.push(`${relPath}: ${describeError(error)}`)
+            continue
+          }
+          const remoteHash = sha256Bytes(bytes)
+          const localBytes = await readBytesIfExists(target)
+          const localHash = localBytes === undefined ? undefined : sha256Bytes(localBytes)
+          if (previous && localHash === previous.localHash && previous.remoteHash === remoteHash) {
+            summary.unchanged.push(relPath)
+            continue
+          }
+          const localChanged =
+            localHash !== undefined && previous !== undefined && localHash !== previous.localHash
+          if (localChanged && !input.force) {
+            const conflictFile = await this.saveBinaryConflict(link, relPath, localBytes ?? new Uint8Array(0), bytes, {
+              reason: 'local-changed',
+              remoteVersion: 0,
+            })
+            summary.conflicts.push(relPath)
+            summary.skipped.push({ path: relPath, reason: `local-changed (kept; remote copy: ${conflictFile})` })
+            continue
+          }
+          await atomicWriteBytes(target, bytes)
+          store.set(relPath, {
+            docId: file.fileId,
+            remoteVersion: 0,
+            remoteHash,
+            localHash: remoteHash,
+            syncedAt: new Date().toISOString(),
+            origin: 'remote',
+          })
+          summary.pulled.push(relPath)
+          await this.journal(link.projectId, { event: 'pull', path: relPath, v: 0, ok: true })
+        }
+      }
+
       if (!input.dryRun) {
         await store.save()
         const gitEnabled = input.gitInit ?? this.config.git.autoInit
@@ -705,6 +764,56 @@ export class OverleafSyncService {
       docs.push({ docId: doc.id, relPath })
     }
     return docs
+  }
+
+  /** Flatten the remote tree into project-relative binary file paths. */
+  collectFiles(snapshot: ProjectSnapshot): RemoteFile[] {
+    const folders = new Map(snapshot.folders.map((folder) => [folder.id, folder]))
+    const memo = new Map<string, string>()
+    const resolveFolder = (folderId: string | null, depth = 0): string => {
+      if (!folderId) return ''
+      if (depth > 64) return ''
+      const cached = memo.get(folderId)
+      if (cached !== undefined) return cached
+      const folder = folders.get(folderId)
+      if (!folder) return ''
+      const parent = resolveFolder(folder.parentFolderId, depth + 1)
+      const full = parent ? `${parent}/${folder.name}` : folder.name
+      memo.set(folderId, full)
+      return full
+    }
+    const files: RemoteFile[] = []
+    for (const file of snapshot.files) {
+      const folder = resolveFolder(file.parentFolderId)
+      const relPath = sanitizeRelative(folder ? `${folder}/${file.name}` : file.name)
+      if (!relPath) continue
+      files.push({ fileId: file.id, relPath })
+    }
+    return files
+  }
+
+  /** Binary sibling of `saveConflict`: same layout, raw bytes instead of text. */
+  private async saveBinaryConflict(
+    link: LinkRecord,
+    relPath: string,
+    localBytes: Uint8Array,
+    remoteBytes: Uint8Array,
+    meta: Record<string, unknown>,
+  ): Promise<string> {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const dir = path.join(conflictsDir(link.projectId), stamp)
+    const base = path.join(dir, ...relPath.split('/'))
+    await ensureDir(path.dirname(base))
+    await atomicWriteBytes(`${base}.local`, localBytes)
+    await atomicWriteBytes(`${base}.remote`, remoteBytes)
+    await atomicWrite(`${base}.meta.json`, JSON.stringify({ path: relPath, ...meta, createdAt: new Date().toISOString() }, null, 2))
+
+    const parsed = path.posix.parse(relPath)
+    const visibleRel = path.posix.join(parsed.dir, `${parsed.name}.remote-${stamp}${parsed.ext}`)
+    const visibleAbs = path.join(link.localRoot, ...visibleRel.split('/'))
+    await ensureDir(path.dirname(visibleAbs))
+    await atomicWriteBytes(visibleAbs, remoteBytes)
+    return visibleRel
   }
 
   private async saveConflict(
