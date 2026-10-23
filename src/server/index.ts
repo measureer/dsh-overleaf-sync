@@ -21,6 +21,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Config } from '../config.js'
 import type { OverleafSyncService } from '../service.js'
 import { describeError, recordDiagnostic } from './diagnostics.js'
+import { createEventsRoute } from './events.js'
 import { createOverleafRoutes, type WebRoute } from './routes.js'
 import { SettingsBridge, type SettingsServiceLike } from './settingsBridge.js'
 import type { PickDirectoryResult } from './types.js'
@@ -121,8 +122,11 @@ export function registerOverleafApi(ctx: Context, deps: ServerDeps): () => void 
       const pickDirectory = createDirectoryPicker(ctx)
       const routes = createOverleafRoutes({ ...deps, settings, pickDirectory })
       for (const route of routes) disposers.push(webServer.register(route))
+      // The change feed is not an envelope route: it holds the response open and
+      // speaks SSE, so it lives beside the table instead of inside it.
+      disposers.push(webServer.register(createEventsRoute()))
       registered = true
-      recordDiagnostic('routes-registered', { how, count: routes.length })
+      recordDiagnostic('routes-registered', { how, count: routes.length + 1 })
     } catch (error) {
       recordDiagnostic('routes-register-failed', { how, error: describeError(error) })
     }

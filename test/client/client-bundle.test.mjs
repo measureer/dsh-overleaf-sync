@@ -100,6 +100,7 @@ test('the factory evaluates against mock externals and registers the settings se
   let localeRegistered = 0
   const ctx = {
     effect: (callback) => callback(),
+    inject: (_names, callback) => callback(ctx),
     locale: {
       bind: () => (key) => key,
       register: () => {
@@ -142,6 +143,7 @@ test('a context without the slots service degrades instead of throwing', async (
   const exportsObject = loaded.factory(require)
   const ctx = {
     effect: (callback) => callback(),
+    inject: (_names, callback) => callback(ctx),
     locale: { bind: () => (key) => key, register: () => () => {} },
   }
   assert.doesNotThrow(() => exportsObject.apply(ctx))

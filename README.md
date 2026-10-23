@@ -4,7 +4,7 @@ DSH（DeepSeek Harness）插件：把本地 LaTeX 文件夹与 Overleaf 项目�
 
 思路参照 [measureer/overleaf-sync](https://github.com/measureer/overleaf-sync)（VS Code 插件）：不走 Git，而是复用 Overleaf 编辑器自己的协作通道（Socket.IO + OT），因此不需要付费的 Git 桥接。
 
-**当前阶段：M2 可运行**——登录态、项目列表、绑定、拉取（自动 `git init` + 首次提交）、推送（默认 dry-run）、三方 diff、冲突不覆盖。后台 watch、`resolve` 工具与 GUI（设置页/侧边栏）仍在路线图上（见[设计文档](docs/design.md) §16 里程碑）。
+**当前阶段：M4b**——登录态、项目列表、绑定、拉取（自动 `git init` + 首次提交）、推送（默认 dry-run）、三方 diff、冲突不覆盖，外加 **GUI 两半**：设置页（账号/项目/目录/策略/git/watch 配置）与**右侧边栏 tab**（状态、待推送、Pull/Push、冲突、日志尾巴、SSE 实时刷新）。后台 watch 与 `resolve` 工具仍在路线图上（见[设计文档](docs/design.md) §16 里程碑）。
 
 ## 安装
 
@@ -73,27 +73,23 @@ dsh plugin --profile desktop add link:C:/code/dsh-overleaf-sync
 ```bash
 npm run build      # tsc → lib/
 npm run typecheck  # tsc --noEmit
-npm test           # node --test 'test/**/*.test.mjs'（113 个：transport 51 + core 34 + service 4 + plugin 4 + server 20）
+npm test           # node --test "test/**/*.test.mjs"（189 个：transport / core / service / plugin / server / client）
 ```
 
 测试用假 transport 跑真实文件系统与 git：`test/service/pull.test.mjs` 覆盖拉取、幂等拉取、推送 OT、冲突保留四条主路径。
 
-## GUI（M4a Host 半侧已完成，浏览器半侧进行中）
+## GUI（M4a 设置页 + M4b 侧边栏，已完成）
 
-浏览器半侧（`lib/client.js`）分两块，都是**薄壳**——所有文件与网络操作仍在 Node 半侧，客户端只渲染与触发：
-
-- **设置页**（Settings → Overleaf 同步）：粘贴 Cookie/CSRF（只写凭据中心、不回显）、选项目、校验并绑定本地目录、冲突策略与 git/watch 开关；显式「保存修改」，写回 profile 配置条目，409 冲突不覆盖。
-- **右侧边栏 tab**（Overleaf）：连接/同步状态、待推改动、Pull / Push(dry-run) / 打开目录、冲突列表、日志尾巴；SSE 实时刷新，断线降级轮询。
-
-**Host 半侧已就绪**：插件在 DSH Web 上注册 `/overleaf/api/*`（`status`、`login`、`logout`、`projects`、
-`validate-path`、`link`、`pull`、`push`、`diff`、`conflicts`、`journal`、`settings.describe`、`settings.update`），
-统一 JSON 信封、同源校验、错误码 → HTTP 状态映射；配置页写入走 DSH Settings 服务（乐观锁 revision，
-冲突回 `E_SETTINGS_CONFLICT`，绝不覆盖别处的修改）。没有 `webServer`/`settings` 的宿主会退化成纯工具插件。
-
-浏览器半侧（`lib/client.js`）分两块，都是**薄壳**——所有文件与网络操作仍在 Node 半侧，客户端只渲染与触发：
+浏览器半侧（`lib/client.js`）是**薄壳**——所有文件与网络操作仍在 Node 半侧，客户端只渲染与触发：
 
 - **设置页**（Settings → Overleaf 同步）：粘贴 Cookie/CSRF（只写凭据中心、不回显）、选项目、校验并绑定本地目录、冲突策略与 git/watch 开关；显式「保存修改」，写回 profile 配置条目，409 冲突不覆盖。
-- **右侧边栏 tab**（Overleaf）：连接/同步状态、待推改动、Pull / Push(dry-run) / 打开目录、冲突列表、日志尾巴；SSE 实时刷新，断线降级轮询。
+- **右侧边栏 tab**（Overleaf 同步）：项目名与文件数、待推送、冲突数；拉取（本地有改动会二次确认）与推送（预演 / 真实推送，真实推送要确认）；本地目录路径一键复制；冲突副本列表与最近活动（journal 尾巴）。数据来自 `/overleaf/api/*`，并用 `GET /overleaf/events`（SSE）实时失效重拉，断流自动降级为 15s 轮询。
+
+Host 半侧注册 `/overleaf/api/*`（`status`、`login`、`logout`、`projects`、`validate-path`、`link`、`pull`、
+`push`、`diff`、`conflicts`、`journal`、`settings.describe`、`settings.update`）与 `GET /overleaf/events`，
+统一 JSON 信封（SSE 除外）、同源校验、错误码 → HTTP 状态映射；设置页写入走 DSH Settings 服务（乐观锁
+revision，冲突回 `E_SETTINGS_CONFLICT`，绝不覆盖别处的修改）。没有 `webServer`/`settings` 的宿主退化成纯工具插件，
+没有右侧栏的 Shell 只少一个 tab，设置页照常工作。
 
 细节与 API 契约见[设计文档 §14](docs/design.md)、[Host↔浏览器接口契约](docs/m4a-api-contract.md) 与[客户端 UI 契约调研](docs/client-ui-notes.md)。
 

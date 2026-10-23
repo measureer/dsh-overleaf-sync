@@ -168,10 +168,33 @@ export interface LinkRecord {
   linkedAt?: string
 }
 
+/** `conflicts` → one remote copy kept next to the project (mirrors `ConflictEntry` in `src/server/types.ts`). */
+export interface ConflictEntry {
+  path: string
+  copyPath: string
+  at: string
+  strategy: string
+}
+
+/** `journal` → one line of the per-project append-only log (mirrors `JournalEntryView`). */
+export interface JournalEntryView {
+  ts?: string
+  event: string
+  path?: string
+  docId?: string
+  v?: number
+  ok?: boolean
+  code?: string
+  [key: string]: unknown
+}
+
 /** A JSON value sent as a settings patch entry. */
 export type FieldValue = string | boolean | number
 
 const ENDPOINT = '/overleaf/api/'
+
+/** Server-sent-events endpoint the sidebar subscribes to (`createEventsRoute`). */
+export const EVENTS_URL = '/overleaf/events'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null

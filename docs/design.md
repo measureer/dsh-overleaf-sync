@@ -1214,7 +1214,7 @@ return () => { stopBody?.(); stopType?.() }   // 两段成对回滚
 | 阶段 | 内容 | 验收 |
 | --- | --- | --- |
 | M4a 设置页 | 自建 `/overleaf/api/settings.*` + 账号/项目/目录/策略四区块 + 显式保存与 409 | 能在 GUI 里完成「登录 → 选项目 → 绑定 → 改策略并保存」，重启后配置仍在 |
-| M4b 侧边栏 | 右侧 tab（原生两段式注册）+ 状态/动作/冲突/日志 + SSE | 面板 pull/push 与工具结果一致；断网重连后状态自愈；冲突实时出现 |
+| M4b 侧边栏 ✅ | 右侧 tab（原生两段式注册）+ 状态/动作/冲突/日志 + SSE | 面板 pull/push 与工具结果一致；断网重连后状态自愈；冲突实时出现 |
 | M4c 打磨 | 工具卡片（`tool.call.toolview`）、审计日志视图、多项目预留 | — |
 
 ---
@@ -1358,9 +1358,9 @@ M0 的产出里还应固化三件实现层面的“钉死项”：`HarnessError`
 | §7.2 watch | — | ⏳ M3 |
 | §10 `overleaf_resolve` | — | ⏳ M3 |
 | §14 GUI：设置页 | `src/server/*` + `src/client/*` + `locale/*` | ✅ M4a（Host API + 设置页，重启 DSH 后可见；实现说明见 [m4a-api-contract.md](m4a-api-contract.md)） |
-| §14 GUI：侧边栏 | — | ⏳ M4b（原生两段式注册 + SSE，设计见 §14.4/14.5） |
+| §14 GUI：侧边栏 | `src/client/sidebar.tsx` + `src/server/events.ts` | ✅ M4b（原生两段式注册、SSE + 15s 轮询降级） |
 
-测试：`test/{core,transport,service,plugin}/` 共 **92 个用例**（`node --test 'test/**/*.test.mjs'`，需先 `tsc` 构建）。
+测试：`test/{core,transport,service,plugin,server,client}/` 共 **189 个用例**（`node --test "test/**/*.test.mjs"`，需先 `tsc` 构建与 `pnpm run bundle`）。
 
 > 协议事实以 `src/transport/` 的实测实现为准：与附录 C 的旧描述冲突处，一律以本附录上一节（§2.2 已同步修正）为准。
 

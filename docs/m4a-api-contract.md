@@ -37,6 +37,12 @@
 | `/overleaf/api/settings.describe` | `{}` | `{ writable, fields, revision }`（见 §3.3） |
 | `/overleaf/api/settings.update` | `{ patch: object, expectedRevision?: number }` | 同 `settings.describe` |
 
+唯一不走信封的端点（M4b 侧边栏用）：
+
+| 路径 | 方法 | 响应 |
+| --- | --- | --- |
+| `/overleaf/events` | `GET` | `text/event-stream`；帧见 §2.4 |
+
 `ProjectListEntry` / `LinkRecord` / `PullSummary` / `PushSummary` / `DiffSummary` 的形状与 `src/service.ts` 的同名类型一致，字段名原样透传。
 
 `pick-directory` 由宿主可选的 `ctx.directoryPicker` 支撑（桌面端解析为 `native`，即系统「选择文件夹」对话框）：
@@ -67,6 +73,23 @@ interface StatusSummary {
   text: string            // 一行摘要，给人看
 }
 ```
+
+### 2.1b 事件流 `/overleaf/events`（SSE）
+
+```
+retry: 3000
+
+event: ready
+data: {"seq":0}
+
+event: status
+data: {"seq":1}
+```
+
+- 帧只带**失效通知 + 序号**，不带业务 payload：客户端收到就去重拉 `status`/`conflicts`/`journal`，所以过期帧最多多一次读取，绝不会渲染出错误数字。
+- `ready` 在连接建立后立即发；此后 Host 每 2 s 对状态根做一次 `mtime:size` 指纹比对（`link.json`/`state.json`/`journal.ndjson`/`conflicts/`），有变化才发 `status`。
+- 每 15 s 一行注释心跳 `: ping`，防代理断开；客户端断流后由 `EventSource` 自己重连（`retry: 3000`），面板同时保留 15 s 轮询兜底。
+- 只用 `GET`；其它方法回 `405` + 错误信封。
 
 ### 2.2 ConflictEntry
 

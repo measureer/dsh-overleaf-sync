@@ -52,8 +52,9 @@ test('the registered section renders its four blocks without a host', async (t) 
 
   const registrations = []
   const exportsObject = loaded.factory(require)
-  exportsObject.apply({
+  const ctx = {
     effect: (callback) => callback(),
+    inject: (_names, callback) => callback(ctx),
     locale: { bind: () => (key) => key, register: () => () => {} },
     slots: {
       inject: (_name, callback) => callback(),
@@ -62,7 +63,8 @@ test('the registered section renders its four blocks without a host', async (t) 
         return () => {}
       },
     },
-  })
+  }
+  exportsObject.apply(ctx)
 
   assert.equal(registrations.length, 1)
   const Section = registrations[0].component
