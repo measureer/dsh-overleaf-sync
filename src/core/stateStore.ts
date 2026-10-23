@@ -156,6 +156,7 @@ function normalizeFileState(value: unknown): FileState | undefined {
     syncedAt: typeof value.syncedAt === 'string' ? value.syncedAt : new Date(0).toISOString(),
   }
   if (typeof value.remoteHash === 'string') entry.remoteHash = value.remoteHash
+  if (value.kind === 'doc' || value.kind === 'file') entry.kind = value.kind
   if (value.origin === 'local' || value.origin === 'remote' || value.origin === 'both') {
     entry.origin = value.origin
   }

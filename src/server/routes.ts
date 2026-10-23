@@ -10,9 +10,11 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
-import { conflictsDir, expandHome, journalPath, stateRoot } from '../core/paths.js'
+import { conflictsDir, expandHome, journalPath, linkPath, stateRoot } from '../core/paths.js'
 import { readProjectState } from '../core/stateStore.js'
-import { listFilesRecursive, normalizeEol, sha256 } from '../core/fsUtil.js'
+import { listFilesRecursive, normalizeEol, readTextIfExists, sha256 } from '../core/fsUtil.js'
+import { loadIgnoreMatcher } from '../core/ignore.js'
+import { countPendingLocalChanges } from './pending.js'
 import { describeError } from '../core/errors.js'
 import type { Config } from '../config.js'
 import type { OverleafSyncService } from '../service.js'
@@ -131,7 +133,7 @@ async function statusView(deps: RouteDeps): Promise<StatusSummary> {
       ? 'Overleaf 未登录：粘贴浏览器 Cookie 后即可拉取项目'
       : current === undefined
         ? '已登录，尚未绑定项目'
-        : `已绑定 ${current.projectName}（${current.files} 个文件${pending.conflicts > 0 ? `，${pending.conflicts} 个冲突待处理` : ''}）`
+        : `已绑定 ${current.projectName}（${current.files} 个文件${pending.localChanges > 0 ? `，${pending.localChanges} 个本地改动待推送` : ''}${pending.conflicts > 0 ? `，${pending.conflicts} 个冲突待处理` : ''}）`
 
   const view: StatusSummary = {
     baseUrl: base.baseUrl,
@@ -187,35 +189,35 @@ async function currentProject(
  * disappeared. Best-effort: an unreadable project reports `0` instead of
  * failing the whole status call.
  */
+async function readLinkRecord(projectId: string): Promise<{ exclude: string[]; localRoot: string } | undefined> {
+  const text = await readTextIfExists(linkPath(projectId))
+  if (text === undefined) return undefined
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (parsed === null || typeof parsed !== 'object') return undefined
+    const record = parsed as Record<string, unknown>
+    const localRoot = typeof record.localRoot === 'string' ? record.localRoot : ''
+    const exclude = Array.isArray(record.exclude)
+      ? record.exclude.filter((item): item is string => typeof item === 'string')
+      : []
+    if (localRoot === '') return undefined
+    return { exclude, localRoot }
+  } catch {
+    return undefined
+  }
+}
+
 async function countLocalChanges(localRoot: string, projectId: string): Promise<number> {
   const state = await readProjectState(projectId)
   if (state === undefined) return 0
-  let changed = 0
-  const seen = new Set<string>()
-  let files: string[]
+  let ignore: ((relPath: string) => boolean) | undefined
   try {
-    files = await listFilesRecursive(localRoot)
+    const link = await readLinkRecord(projectId)
+    ignore = await loadIgnoreMatcher(localRoot, link?.exclude)
   } catch {
-    return 0
+    ignore = undefined
   }
-  for (const rel of files) {
-    const baseline = state.files[rel]
-    if (baseline === undefined) {
-      changed += 1
-      continue
-    }
-    seen.add(rel)
-    try {
-      const text = await fs.readFile(path.join(localRoot, rel), 'utf8')
-      if (sha256(normalizeEol(text)) !== baseline.localHash) changed += 1
-    } catch {
-      changed += 1
-    }
-  }
-  for (const rel of Object.keys(state.files)) {
-    if (!seen.has(rel) && !files.includes(rel)) changed += 1
-  }
-  return changed
+  return await countPendingLocalChanges(state, localRoot, ignore)
 }
 
 // --------------------------------------------------------------- credentials

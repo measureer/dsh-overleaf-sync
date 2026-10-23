@@ -443,6 +443,7 @@ export class OverleafSyncService {
           localHash: remoteHash,
           syncedAt: new Date().toISOString(),
           origin: 'remote',
+          kind: 'doc',
         })
         summary.pulled.push(relPath)
         await this.journal(link.projectId, { event: 'pull', path: relPath, v: content.version, ok: true })
@@ -494,6 +495,7 @@ export class OverleafSyncService {
             localHash: remoteHash,
             syncedAt: new Date().toISOString(),
             origin: 'remote',
+            kind: 'file',
           })
           summary.pulled.push(relPath)
           await this.journal(link.projectId, { event: 'pull', path: relPath, v: 0, ok: true })
@@ -716,8 +718,11 @@ export class OverleafSyncService {
       }
     }
     const authenticated = Boolean(credential)
+    // The credential knows which server it was issued for; config.baseUrl is
+    // only the default for a *new* login.
+    const activeBaseUrl = credential?.baseUrl ?? this.config.baseUrl
     const lines: string[] = []
-    lines.push(`Overleaf: ${authenticated ? 'authenticated' : 'not logged in'} (${this.config.baseUrl})`)
+    lines.push(`Overleaf: ${authenticated ? 'authenticated' : 'not logged in'} (${activeBaseUrl})`)
     if (credential?.userHint) lines.push(`account hint: ${credential.userHint}`)
     lines.push(`watcher: off (watch.autoStart=${this.config.watch.autoStart})`)
     if (projects.length === 0) {
@@ -729,7 +734,7 @@ export class OverleafSyncService {
       }
     }
     return {
-      baseUrl: this.config.baseUrl,
+      baseUrl: activeBaseUrl,
       authenticated,
       ...(credential?.userHint ? { credentialHint: credential.userHint } : {}),
       ...(credential?.savedAt ? { credentialSavedAt: credential.savedAt } : {}),

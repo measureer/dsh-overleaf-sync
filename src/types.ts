@@ -149,6 +149,12 @@ export interface FileState {
   localHash: string
   syncedAt: string
   origin?: 'local' | 'remote' | 'both'
+  /**
+   * How the file is compared: `doc` is a text document (hashes over normalized
+   * LF text), `file` is a binary upload (hashes over raw bytes). Entries
+   * written before this field existed are documents.
+   */
+  kind?: 'doc' | 'file'
 }
 
 export interface ProjectState {

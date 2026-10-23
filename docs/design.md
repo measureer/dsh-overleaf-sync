@@ -515,7 +515,8 @@ class DocSession {
       "remoteHash": "sha256:…",   // 上次见到的远端内容
       "localHash":  "sha256:…",    // 上次同步时本地内容
       "syncedAt":   "2026-10-22T21:29:58+08:00",
-      "origin": "remote"           // local | remote | both
+      "origin": "remote",          // local | remote | both
+      "kind": "doc"                // doc | file（file = 二进制上传，按原始字节哈希）
     }
   },
   "filesMissing": { "old/chapter.tex": { "docId": "…", "deletedAt": "…" } }
@@ -523,6 +524,8 @@ class DocSession {
 ```
 
 三方比较（`changedLocal` / `changedRemote`）只看三个值：`当前磁盘哈希`、`localHash`、`remoteVersion vs 当前远端版本`。这正是参考实现 `stateStore` 的思路，只是存储位置与字段更严格。
+
+`kind` 决定哈希口径：`doc` 对 LF 归一化后的文本取 `sha256`，`file`（图片、PDF 等二进制上传）对原始字节取 `sha256`。缺省视为 `doc`，旧状态文件无需迁移。**混用口径会让"刚拉取就有改动"成为常态**——二进制文件按 UTF-8 解码后再哈希必然与字节哈希不同，这正是 0.3 之前的「待推送 12」bug。
 
 ### 6.6 core.ignore
 
@@ -1176,6 +1179,14 @@ return () => { stopBody?.(); stopType?.() }   // 两段成对回滚
 - 返回信封 `{ ok: true, value }` / `{ ok: false, code, message, hint? }`，`code` 与工具错误码同一套（§12 的 `E_*` 表）。
 - `sessionId` 由客户端附带、Host 只用于日志与后续多项目路由，**不用于鉴权**（鉴权仍是平台会话 + 凭据中心）。
 - 路由只做参数校验与错误映射，业务逻辑一律复用 `OverleafSyncService`（与工具同一份实现，禁止平行逻辑）。
+
+**`pending.localChanges` 的口径**（`src/server/pending.ts`）：
+
+1. 只遍历 `state.files` 的基线条目——**本地未跟踪文件永不计数**（`push` 也不会发送它们，`.gitattributes`、编辑器交换文件不该让角标虚高）；
+2. 命中 ignore 规则（`.overleaf-syncignore` + link 的 `exclude`）的路径跳过——它们是被**故意**排除的，不算待推送；
+3. 读不到文件记 1 次改动（删除也是待推送）；
+4. 比较时先比原始字节哈希，`kind: 'file'` 就此返回，`kind: 'doc'`（或缺省）再比 LF 归一化文本哈希，兼容旧状态文件。
+
 
 ### 14.6 安全边界
 
