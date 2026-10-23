@@ -28,6 +28,43 @@ export const E_NO_ROUTE = 'E_NO_ROUTE'
 export const E_NETWORK = 'E_NETWORK'
 
 /** `status` → StatusSummary. */
+export interface SyncSkipped {
+  path: string
+  reason: string
+}
+
+/** What one pull wrote (mirrors `PullSummary` in `src/service.ts`). */
+export interface PullSummary {
+  projectId: string
+  projectName: string
+  localRoot: string
+  pulled: string[]
+  unchanged: string[]
+  skipped: SyncSkipped[]
+  conflicts: string[]
+  warnings: string[]
+  git?: {
+    root: string
+    mode: 'own' | 'parent' | 'none'
+    head?: string
+    created?: boolean
+    committed?: boolean
+    skipped?: string
+  }
+}
+
+/** What one push sent (mirrors `PushSummary` in `src/service.ts`). */
+export interface PushSummary {
+  projectId: string
+  projectName: string
+  localRoot: string
+  dryRun: boolean
+  pushed: string[]
+  unchanged: string[]
+  skipped: SyncSkipped[]
+  conflicts: string[]
+}
+
 export interface StatusSummary {
   baseUrl: string
   authenticated: boolean

@@ -8,10 +8,158 @@ import type {
   PathValidation,
   PickDirectoryResult,
   ProjectListEntry,
+  PullSummary,
+  PushSummary,
   SettingsField,
   StatusSummary,
 } from './api'
 import { FieldControl, FieldRow, Hint, SectionCard, SwitchRow, type DraftValue, type Translate } from './fields'
+
+/**
+ * The manual sync surface.
+ *
+ * Linking only records "this Overleaf project lives here"; pulling is what
+ * actually writes files (and, on first pull, `git init`). Background watching
+ * is not part of this milestone, so the buttons are the whole story and the
+ * hint says so instead of letting people wait for something that never comes.
+ */
+export function SyncBlock(props: {
+  t: Translate
+  status: StatusSummary | null
+  disabled: boolean
+  busy: boolean
+  pull: PullSummary | null
+  push: PushSummary | null
+  onPull: () => void
+  onPush: (dryRun: boolean) => void
+}): ReactNode {
+  const t = props.t
+  const [confirmPush, setConfirmPush] = useState(false)
+  const current = props.status?.current
+  const pending = props.status?.pending
+  const dirty = pending === undefined ? 0 : pending.localChanges
+  const conflicts = pending === undefined ? 0 : pending.conflicts
+
+  if (current === undefined) {
+    return (
+      <SectionCard title={t('syncTitle')}>
+        <Hint>{t('syncUnlinked')}</Hint>
+      </SectionCard>
+    )
+  }
+
+  return (
+    <SectionCard title={t('syncTitle')}>
+      <Hint>{t('syncHint')}</Hint>
+      <div style={summaryGrid}>
+        <span style={summaryKey}>{t('projectTitle')}</span>
+        <span>{current.projectName}</span>
+        <span style={summaryKey}>{t('localRootLabel')}</span>
+        <span style={{ wordBreak: 'break-all' }}>{current.localRoot}</span>
+        <span style={summaryKey}>{t('syncFilesLabel')}</span>
+        <span>{String(current.files)}</span>
+        {current.git === undefined ? null : (
+          <>
+            <span style={summaryKey}>git</span>
+            <span>
+              {current.git.mode === 'own'
+                ? t('syncGitOwn', { head: current.git.head === undefined ? '—' : current.git.head.slice(0, 8) })
+                : t('syncGitParent')}
+            </span>
+          </>
+        )}
+        <span style={summaryKey}>{t('syncPendingLabel')}</span>
+        <span>
+          {t('syncPendingValue', { count: dirty })}
+          {conflicts === 0 ? '' : ` · ${t('syncConflictsShort', { count: conflicts })}`}
+        </span>
+      </div>
+
+      <div style={actionRow}>
+        <Button variant="outline" size="sm" disabled={props.disabled || props.busy} onClick={props.onPull}>
+          {props.busy ? t('pulling') : t('pullButton')}
+        </Button>
+        <Button variant="ghost" size="sm" disabled={props.disabled || props.busy} onClick={() => props.onPush(true)}>
+          {t('pushDryButton')}
+        </Button>
+        {confirmPush ? (
+          <>
+            <Hint tone="warn">{t('pushConfirm', { count: dirty })}</Hint>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={props.disabled || props.busy}
+              onClick={() => {
+                setConfirmPush(false)
+                props.onPush(false)
+              }}
+            >
+              {t('pushConfirmYes')}
+            </Button>
+            <Button variant="ghost" size="sm" disabled={props.busy} onClick={() => setConfirmPush(false)}>
+              {t('pushConfirmNo')}
+            </Button>
+          </>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={props.disabled || props.busy || dirty === 0}
+            onClick={() => setConfirmPush(true)}
+          >
+            {t('pushButton')}
+          </Button>
+        )}
+      </div>
+
+      {props.pull === null ? null : (
+        <div style={resultBox}>
+          <strong>{t('syncPulled', { pulled: props.pull.pulled.length, unchanged: props.pull.unchanged.length })}</strong>
+          {props.pull.conflicts.length === 0 ? null : (
+            <Hint tone="warn">{t('syncConflicts', { count: props.pull.conflicts.length })}</Hint>
+          )}
+          {props.pull.skipped.length === 0 ? null : (
+            <Hint>{t('syncSkipped', { count: props.pull.skipped.length })}</Hint>
+          )}
+          {props.pull.pulled.length === 0 ? null : (
+            <PathList paths={props.pull.pulled} emptyLabel="" />
+          )}
+          {props.pull.warnings.length === 0 ? null : (
+            <Hint tone="warn">{props.pull.warnings.slice(0, 3).join(' · ')}</Hint>
+          )}
+        </div>
+      )}
+
+      {props.push === null ? null : (
+        <div style={resultBox}>
+          <strong>
+            {props.push.dryRun
+              ? t('syncDryRun', { count: props.push.pushed.length })
+              : t('syncPushed', { count: props.push.pushed.length })}
+          </strong>
+          {props.push.conflicts.length === 0 ? null : (
+            <Hint tone="warn">{t('syncConflicts', { count: props.push.conflicts.length })}</Hint>
+          )}
+          {props.push.skipped.length === 0 ? null : <Hint>{t('syncSkipped', { count: props.push.skipped.length })}</Hint>}
+          {props.push.pushed.length === 0 ? null : <PathList paths={props.push.pushed} emptyLabel="" />}
+        </div>
+      )}
+    </SectionCard>
+  )
+}
+
+/** First few paths of a sync result; enough to recognize the files at a glance. */
+function PathList(props: { paths: string[]; emptyLabel: string }): ReactNode {
+  if (props.paths.length === 0) return <span style={{ opacity: 0.75 }}>{props.emptyLabel}</span>
+  const shown = props.paths.slice(0, 8)
+  const rest = props.paths.length - shown.length
+  return (
+    <span style={{ fontSize: 12, opacity: 0.85, wordBreak: 'break-all' }}>
+      {shown.join(' · ')}
+      {rest > 0 ? ` … +${String(rest)}` : ''}
+    </span>
+  )
+}
 
 /** Keys rendered by the "sync strategy" block, in order. */
 const STRATEGY_KEYS = [
@@ -41,6 +189,34 @@ const inputRow: React.CSSProperties = {
   gap: 8,
   flexWrap: 'wrap',
 }
+const summaryGrid: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'max-content 1fr',
+  gap: '4px 12px',
+  fontSize: 12.5,
+  alignItems: 'baseline',
+}
+
+const summaryKey: React.CSSProperties = {
+  opacity: 0.6,
+}
+
+const actionRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  flexWrap: 'wrap',
+}
+
+const resultBox: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4,
+  fontSize: 12.5,
+  borderTop: '1px solid rgba(127, 127, 127, 0.2)',
+  paddingTop: 8,
+}
+
 
 const mono: React.CSSProperties = {
   fontFamily: 'monospace',

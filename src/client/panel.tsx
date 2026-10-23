@@ -16,13 +16,15 @@ import {
   type PathValidation,
   type PickDirectoryResult,
   type ProjectListEntry,
+  type PullSummary,
+  type PushSummary,
   type SettingsField,
   type SettingsView,
   type StatusSummary,
 } from './api'
 import { RenderBoundary } from './boundary'
 import { Hint, type DraftValue } from './fields'
-import { AccountBlock, AdvancedBlock, ProjectBlock, StrategyBlock } from './sections'
+import { AccountBlock, AdvancedBlock, ProjectBlock, StrategyBlock, SyncBlock } from './sections'
 
 /**
  * Props handed to a `settings.section` entry: the slot supplies the runtime face
@@ -129,6 +131,8 @@ export function OverleafSettingsSection(props: PanelProps): ReactNode {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
+  const [pullResult, setPullResult] = useState<PullSummary | null>(null)
+  const [pushResult, setPushResult] = useState<PushSummary | null>(null)
   const [conflict, setConflict] = useState(false)
   const [hostReady, setHostReady] = useState(true)
   const [loadFailure, setLoadFailure] = useState<ApiFailure | null>(null)
@@ -295,6 +299,46 @@ export function OverleafSettingsSection(props: PanelProps): ReactNode {
     return result
   }, [noteFailure])
 
+  const pull = useCallback(async (): Promise<void> => {
+    setBusy('pull')
+    setNotice(null)
+    const result = await post<PullSummary>('pull', { force: false })
+    setBusy(null)
+    if (!result.ok) {
+      noteFailure(result)
+      return
+    }
+    setPullResult(result.value)
+    const files = result.value.pulled.length
+    setNotice({
+      tone: files > 0 ? 'ok' : 'warn',
+      text: files > 0 ? t('syncPulled', { pulled: files, unchanged: result.value.unchanged.length }) : t('pullNothing'),
+    })
+    await loadStatus()
+  }, [loadStatus, noteFailure, t])
+
+  const push = useCallback(
+    async (dryRun: boolean): Promise<void> => {
+      setBusy('push')
+      setNotice(null)
+      const result = await post<PushSummary>('push', dryRun ? { dryRun: true } : { dryRun: false, confirm: true })
+      setBusy(null)
+      if (!result.ok) {
+        noteFailure(result)
+        return
+      }
+      setPushResult(result.value)
+      setNotice({
+        tone: 'ok',
+        text: result.value.dryRun
+          ? t('syncDryRun', { count: result.value.pushed.length })
+          : t('syncPushed', { count: result.value.pushed.length }),
+      })
+      await loadStatus()
+    },
+    [loadStatus, noteFailure, t],
+  )
+
   const link = useCallback(
     async (payload: { projectId: string; localRoot?: string; force?: boolean }): Promise<ApiResult<LinkRecord>> => {
       setBusy('link')
@@ -302,7 +346,24 @@ export function OverleafSettingsSection(props: PanelProps): ReactNode {
       const result = await post<LinkRecord>('link', payload)
       setBusy(null)
       if (result.ok) {
-        setNotice({ tone: 'ok', text: t('linkButton') })
+        await loadStatus()
+        // Linking only records the pair; the first sync is what the user is
+        // actually waiting for, so pull right away and report what landed.
+        setBusy('pull')
+        const pulled = await post<PullSummary>('pull', { projectId: result.value.projectId, force: false })
+        setBusy(null)
+        if (pulled.ok) {
+          setPullResult(pulled.value)
+          setNotice({
+            tone: pulled.value.pulled.length > 0 ? 'ok' : 'warn',
+            text:
+              pulled.value.pulled.length > 0
+                ? t('linkedAndPulled', { count: pulled.value.pulled.length, root: pulled.value.localRoot })
+                : t('linkedNoFiles'),
+          })
+        } else {
+          setNotice({ tone: 'warn', text: t('linkedPullFailed', { reason: describeFailure(pulled) }) })
+        }
         await loadStatus()
         return result
       }
@@ -409,6 +470,19 @@ export function OverleafSettingsSection(props: PanelProps): ReactNode {
           onValidatePath={validatePath}
           onPickDirectory={pickDirectory}
           onLink={link}
+        />
+      </RenderBoundary>
+
+      <RenderBoundary title={t('boundaryTitle', { section: t('syncTitle') })} retryLabel={t('boundaryRetry')}>
+        <SyncBlock
+          t={t}
+          status={status}
+          disabled={!hostReady}
+          busy={busy === 'pull' || busy === 'push'}
+          pull={pullResult}
+          push={pushResult}
+          onPull={() => void pull()}
+          onPush={(dryRun) => void push(dryRun)}
         />
       </RenderBoundary>
 
