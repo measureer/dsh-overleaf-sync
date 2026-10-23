@@ -16,6 +16,11 @@ import { readTextIfExists } from './fsUtil.js'
 /** Ignore rules that always apply, before the project file and `exclude`. */
 export const BUILTIN_IGNORES: string[] = [
   '.git/',
+  // Git metadata this plugin creates itself (`git init` in §5.8). It belongs to
+  // the local repository, never to the Overleaf project, so it must not show up
+  // as "pending push" or be uploaded.
+  '.gitattributes',
+  '.gitignore',
   '.dsh-*/',
   '*.tmp',
   '*.swp',

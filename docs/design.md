@@ -529,13 +529,15 @@ class DocSession {
 
 ### 6.6 core.ignore
 
-优先级从高到低：
+规则来源按**应用顺序**拼接（`BUILTIN_IGNORES` → `.overleaf-syncignore` → link.json 的 `exclude`），后出现的规则覆盖前面的（因此用户可以在 `.overleaf-syncignore` 里用 `!` 把内置规则取消掉，与 `.gitignore` 一致）：
 
-1. `.overleaf-syncignore`（项目内，与参考实现同名，降低迁移成本）；
-2. link.json 的 `exclude` 数组；
-3. 内置默认：`.git/`、`.dsh-*/`、`*.tmp`、`*.swp`、`.DS_Store`、`node_modules/`、`*.pdf`（可选，见 §8 二进制）。
+1. 内置默认：`.git/`、`.gitattributes`、`.gitignore`、`.dsh-*/`、`*.tmp`、`*.swp`、`.DS_Store`、`node_modules/`；
+2. `.overleaf-syncignore`（项目内，与参考实现同名，降低迁移成本）；
+3. link.json 的 `exclude` 数组。
 
-语义与 `.gitignore` 对齐（支持 `!` 取反、目录尾斜杠、`**`），但**不做跨层忽略**：只忽略匹配到的文件，保留空目录（Overleaf 空目录本身不承载内容）。
+`.gitattributes` / `.gitignore` 属于**本地仓库的元数据**（§5.8 的自动 `git init` 会生成它们），对 Overleaf 毫无意义：不忽略就会出现在 `diff` 里、被 `push` 当成新文件传上去。`.git/` 目录本身同理。
+
+语义与 `.gitignore` 对齐（支持 `!` 取反、目录尾斜杠、`**`），但**不做跨层忽略**：只忽略匹配到的文件，保留空目录（Overleaf 空目录本身不承载内容）。二进制（图片/PDF）**默认不同步**，需要时显式加 `include`（§8 的 `binary`），不再默认排除 `*.pdf`——论文插图多为 PDF。
 
 ### 6.7 core.watcher
 

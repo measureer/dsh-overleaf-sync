@@ -21,7 +21,25 @@ async function tempDir(t, prefix = 'dsh-ol-ignore-') {
 }
 
 test('BUILTIN_IGNORES matches the documented defaults', () => {
-  assert.deepEqual(BUILTIN_IGNORES, ['.git/', '.dsh-*/', '*.tmp', '*.swp', '.DS_Store', 'node_modules/'])
+  assert.deepEqual(BUILTIN_IGNORES, [
+    '.git/',
+    '.gitattributes',
+    '.gitignore',
+    '.dsh-*/',
+    '*.tmp',
+    '*.swp',
+    '.DS_Store',
+    'node_modules/',
+  ])
+})
+
+test('git metadata files are ignored', async (t) => {
+  const dir = await tempDir(t)
+  const ignore = await loadIgnoreMatcher(dir)
+  assert.equal(ignore('.gitattributes'), true)
+  assert.equal(ignore('.gitignore'), true)
+  assert.equal(ignore('figures/.gitignore'), true)
+  assert.equal(ignore('.gitconfig'), false)
 })
 
 test('globToRegExp: * stays inside one path segment', () => {
