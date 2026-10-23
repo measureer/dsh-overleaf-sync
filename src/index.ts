@@ -31,9 +31,26 @@ export function apply(ctx: Context, input?: Partial<ResolvedConfig>): void {
       const disposers = createOverleafTools(service, config).map((tool) => sctx.tools.register(tool))
       return () => {
         for (const dispose of disposers.reverse()) dispose()
+        // Watch sessions own a socket each: they must not outlive the plugin.
+        void service.stopAllWatches()
       }
     })
   })
+
+  // `watch.autoStart` is opt-in. The delayed start keeps plugin loading cheap and
+  // gives the host a moment to finish mounting before we open a socket.
+  if (config.watch.autoStart) {
+    ctx.inject(['tools'], (sctx) => {
+      sctx.effect(() => {
+        const timer = setTimeout(() => {
+          void service
+            .watch({ action: 'start' }, { cwd: process.cwd() })
+            .catch(() => undefined)
+        }, 2000)
+        return () => clearTimeout(timer)
+      })
+    })
+  }
 
   // The GUI half is optional: a host without a web server just never loads it.
   registerOverleafApi(ctx, { service, config, cwd: process.cwd(), namespace: 'overleaf-sync' })

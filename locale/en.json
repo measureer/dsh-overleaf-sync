@@ -126,5 +126,20 @@
   "sbJournalEmpty": "No activity yet",
   "sbNothingToPush": "Nothing to push",
   "sbPullConfirm": "You have {count} local change(s) not pushed yet; pulling may overwrite them. Pull anyway?",
-  "sbPullAnyway": "Pull anyway"
+  "sbPullAnyway": "Pull anyway",
+  "sbWatchTitle": "Background sync",
+  "sbWatchOn": "Running",
+  "sbWatchOff": "Off",
+  "sbWatchStart": "Start background sync",
+  "sbWatchStop": "Stop background sync",
+  "sbWatchOpenDocs": "Open docs",
+  "sbWatchHint": "While on, one socket stays open: saved edits are pushed and remote edits land on disk. One live connection per account and project.",
+  "sbWatchStarted": "Background sync started",
+  "sbWatchStopped": "Background sync stopped",
+  "sbResolveKeepLocal": "Keep local",
+  "sbResolveKeepRemote": "Take remote",
+  "sbResolveMerge": "Merge",
+  "sbResolveHint": "Resolving records a fresh baseline; Merge writes conflict markers into the file.",
+  "sbResolved": "Resolved {count} conflict(s)",
+  "sbResolveNone": "No unresolved conflicts left"
 }

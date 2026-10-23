@@ -15,6 +15,8 @@ import {
 import { atomicWrite, ensureDir, normalizeEol, readTextIfExists, sha256 } from './core/fsUtil.js'
 import { atomicWriteBytes, readBytesIfExists, sha256Bytes } from './core/files.js'
 import { ensureGitRepository } from './core/gitInit.js'
+import { discoverConflicts, resolveConflict, writeBinaryConflict, writeTextConflict } from './core/conflicts.js'
+import type { ConflictChoice, ConflictEntry } from './core/conflicts.js'
 import { loadIgnoreMatcher } from './core/ignore.js'
 import { appendJournal } from './core/journal.js'
 import { diffToOps } from './core/otDiff.js'
@@ -22,6 +24,8 @@ import { StateStore } from './core/stateStore.js'
 import { clearCredential, loadCredential, saveCredential } from './transport/credentials.js'
 import { OverleafHttp } from './transport/http.js'
 import { createTransport } from './transport/index.js'
+import { WatchSession } from './watch/session.js'
+import type { WatchEvent } from './watch/session.js'
 import type {
   Credential,
   GitInitResult,
@@ -148,6 +152,65 @@ export interface StatusSummary {
   text: string
 }
 
+export interface ConflictsSummary {
+  projectId: string
+  projectName: string
+  localRoot: string
+  conflicts: ConflictEntry[]
+}
+
+export interface ResolveInput {
+  projectId?: string
+  path?: string
+  all?: boolean
+  choice?: ConflictChoice
+  dryRun?: boolean
+}
+
+export interface ResolveSummary {
+  projectId: string
+  projectName: string
+  localRoot: string
+  dryRun: boolean
+  choice: ConflictChoice
+  resolved: Array<{
+    path: string
+    choice: ConflictChoice
+    kind: 'doc' | 'file'
+    remoteVersion: number
+    archivedTo?: string
+  }>
+}
+
+export type WatchAction = 'start' | 'stop' | 'status'
+
+export interface WatchInput {
+  action: WatchAction
+  projectId?: string
+}
+
+export interface WatchStatus {
+  /** true when at least one project is being watched right now */
+  running: boolean
+  projectId?: string
+  projectName?: string
+  localRoot?: string
+  openDocs: number
+  startedAt?: string
+  lastEventAt?: string
+  lastError?: string
+  events: WatchEvent[]
+  sessions: Array<{
+    projectId: string
+    projectName: string
+    localRoot: string
+    openDocs: number
+    startedAt?: string
+    lastEventAt?: string
+    lastError?: string
+  }>
+}
+
 /** A document on the remote side, with its project-relative path. */
 interface RemoteDoc {
   docId: string
@@ -170,6 +233,11 @@ export interface ServiceDeps {
 }
 
 export class OverleafSyncService {
+  /** Long-lived watch sessions, keyed by project id (design §5.2). */
+  private readonly watchSessions = new Map<
+    string,
+    { session: WatchSession; transport: OverleafTransport }
+  >()
   /** Project ids with a pull/push in flight — a second call gets `E_BUSY`. */
   private readonly busy = new Set<string>()
 
@@ -418,9 +486,11 @@ export class OverleafSyncService {
         }
 
         const localChanged = localHash !== undefined && previous !== undefined && localHash !== previous.localHash
+        // Both sides moved: the local edit alone would not be a conflict.
+        const remoteChanged = previous !== undefined && previous.remoteHash !== remoteHash
         if (localChanged && !input.force) {
           const conflictFile = await this.saveConflict(link, relPath, localText ?? '', content.text, {
-            reason: 'local-changed',
+            reason: remoteChanged ? 'both-changed' : 'local-changed',
             localVersion: previous?.remoteVersion,
             remoteVersion: content.version,
           })
@@ -724,7 +794,15 @@ export class OverleafSyncService {
     const lines: string[] = []
     lines.push(`Overleaf: ${authenticated ? 'authenticated' : 'not logged in'} (${activeBaseUrl})`)
     if (credential?.userHint) lines.push(`account hint: ${credential.userHint}`)
-    lines.push(`watcher: off (watch.autoStart=${this.config.watch.autoStart})`)
+    const watch = this.watchStatus()
+    if (watch.running) {
+      const detail = watch.sessions
+        .map((session) => `${session.projectName} (open docs ${session.openDocs})`)
+        .join(', ')
+      lines.push(`watcher: on — ${detail}`)
+    } else {
+      lines.push(`watcher: off (watch.autoStart=${this.config.watch.autoStart})`)
+    }
     if (projects.length === 0) {
       lines.push('linked projects: none')
     } else {
@@ -797,6 +875,260 @@ export class OverleafSyncService {
     return files
   }
 
+  /** List unresolved conflicts of the linked project (design §10). */
+  async conflicts(input: { projectId?: string } = {}, _ctx?: ServiceContext): Promise<ConflictsSummary> {
+    const link = await this.readLink(input.projectId)
+    const conflicts = await discoverConflicts(link.projectId)
+    return {
+      projectId: link.projectId,
+      projectName: link.projectName,
+      localRoot: link.localRoot,
+      conflicts,
+    }
+  }
+
+  /**
+   * Settle one conflict, or all of them.
+   *
+   * Local files are rewritten; Overleaf is not touched — choosing `keep_local`
+   * only means "the next push should send this", which still goes through the
+   * normal three-way check. Both sides stay recoverable: the artifact directory
+   * is archived under `conflicts/resolved/<stamp>/`.
+   */
+  async resolve(input: ResolveInput, _ctx: ServiceContext): Promise<ResolveSummary> {
+    const link = await this.readLink(input.projectId)
+    const dryRun = input.dryRun === true
+    const choice = input.choice ?? 'keep_local'
+    const entries = await discoverConflicts(link.projectId)
+    const wanted = (input.path ?? '').replaceAll('\\', '/')
+
+    let targets = entries
+    if (input.all !== true) {
+      if (!wanted) {
+        throw new OverleafSyncError(
+          'E_CONFLICT',
+          'No conflict selected',
+          'pass `path` (or `all: true` to settle every open conflict) — run overleaf_conflicts to list them',
+        )
+      }
+      const matched = entries.filter(
+        (entry) => entry.path === wanted || path.posix.basename(entry.path) === wanted,
+      )
+      if (matched.length === 0) {
+        throw new OverleafSyncError(
+          'E_CONFLICT',
+          `No unresolved conflict for "${wanted}"`,
+          entries.length === 0
+            ? 'there are no conflicts right now — run overleaf_status or overleaf_pull'
+            : `open conflicts: ${entries.map((entry) => entry.path).slice(0, 5).join(', ')}`,
+        )
+      }
+      targets = matched
+    }
+
+    const store = await StateStore.load(link.projectId, link.localRoot)
+    const resolved: ResolveSummary['resolved'] = []
+    let transport: OverleafTransport | undefined
+    try {
+      for (const entry of targets) {
+        const previous = store.get(entry.path)
+        const result = await resolveConflict({ link, entry, choice, dryRun })
+        let remoteVersion = result.remoteVersion
+        let remoteHash = result.remoteHash
+
+        // `keep_local` means "the local text is the truth" — send it now, or the
+        // next pull would call the very same divergence a conflict again.
+        if (!dryRun && choice === 'keep_local' && entry.kind === 'doc') {
+          const docId = previous?.docId
+          if (docId) {
+            transport ??= await (this.deps.createTransport ?? createTransport)(
+              await this.requireCredential(),
+              link.projectId,
+              {},
+            )
+            const remote = await transport.joinDoc(docId)
+            const localText = (await readTextIfExists(path.join(link.localRoot, ...entry.path.split('/')))) ?? ''
+            const ops = diffToOps(remote.text, localText)
+            const applied = ops.length > 0 ? await transport.applyOtUpdate(docId, remote.version, ops) : remote
+            remoteVersion = applied.version
+            remoteHash = sha256(normalizeEol(localText))
+          }
+        }
+
+        if (!dryRun) {
+          store.set(entry.path, {
+            docId: previous?.docId ?? entry.path,
+            remoteVersion,
+            remoteHash,
+            localHash: result.localHash,
+            syncedAt: new Date().toISOString(),
+            origin: 'both',
+            kind: entry.kind,
+          })
+          await this.journal(link.projectId, { event: 'resolve', path: entry.path, ok: true, choice })
+        }
+        resolved.push({
+          path: entry.path,
+          choice,
+          kind: entry.kind,
+          remoteVersion,
+          ...(result.archivedTo !== undefined ? { archivedTo: result.archivedTo } : {}),
+        })
+      }
+      if (!dryRun) await store.save()
+    } finally {
+      await transport?.close().catch(() => undefined)
+    }
+
+    return {
+      projectId: link.projectId,
+      projectName: link.projectName,
+      localRoot: link.localRoot,
+      dryRun,
+      choice,
+      resolved,
+    }
+  }
+
+  // ------------------------------------------------------------------- watch
+
+  /**
+   * `overleaf_watch`: start / stop / inspect the background two-way sync.
+   *
+   * A session owns its socket for its whole lifetime (unlike pull/push, which
+   * connect per call), so starting twice returns the running session instead of
+   * opening a second one — Overleaf's 0.9 relays allow only one live session per
+   * user and project.
+   */
+  async watch(input: WatchInput, ctx: ServiceContext): Promise<WatchStatus> {
+    if (input.action === 'start') {
+      const link = await this.readLink(input.projectId)
+      if (!this.watchSessions.has(link.projectId)) {
+        const credential = await this.requireCredential()
+        const openTransport = this.deps.createTransport ?? createTransport
+        const transport = await openTransport(credential, link.projectId, {
+          ...(ctx.signal ? { signal: ctx.signal } : {}),
+        })
+        try {
+          const snapshot = await transport.joinProject()
+          const docs = this.collectDocs(snapshot).map((doc) => ({
+            docId: doc.docId,
+            relPath: doc.relPath,
+          }))
+          const session = new WatchSession({
+            link,
+            transport,
+            config: this.config,
+            docs,
+            ...(ctx.logger ? { logger: ctx.logger } : {}),
+          })
+          await session.start()
+          this.watchSessions.set(link.projectId, { session, transport })
+        } catch (error) {
+          await transport.close().catch(() => undefined)
+          throw error
+        }
+      }
+      return this.watchStatus({ projectId: link.projectId })
+    }
+
+    if (input.action === 'stop') {
+      const link = await this.readLink(input.projectId)
+      const running = this.watchSessions.get(link.projectId)
+      if (running) {
+        this.watchSessions.delete(link.projectId)
+        await running.session.stop()
+        await running.transport.close().catch(() => undefined)
+      }
+      return this.watchStatus({ projectId: link.projectId })
+    }
+
+    return this.watchStatus(input)
+  }
+
+  /** Snapshot of every running session (used by `overleaf_watch` and `overleaf_status`). */
+  watchStatus(input: { projectId?: string } = {}): WatchStatus {
+    const sessions: WatchStatus['sessions'] = []
+    for (const [projectId, { session }] of this.watchSessions) {
+      const stats = session.stats
+      sessions.push({
+        projectId,
+        projectName: session.linkInfo.projectName,
+        localRoot: session.linkInfo.localRoot,
+        openDocs: session.openDocCount,
+        ...(stats.startedAt ? { startedAt: stats.startedAt } : {}),
+        ...(stats.lastEventAt ? { lastEventAt: stats.lastEventAt } : {}),
+        ...(stats.lastError ? { lastError: stats.lastError } : {}),
+      })
+    }
+
+    const describe = (
+      projectId: string,
+    ): {
+      openDocs: number
+      events: WatchEvent[]
+      projectName?: string
+      localRoot?: string
+      startedAt?: string
+      lastEventAt?: string
+      lastError?: string
+    } => {
+      const session = this.watchSessions.get(projectId)?.session
+      const entry = sessions.find((item) => item.projectId === projectId)
+      return {
+        ...(entry
+          ? {
+              projectName: entry.projectName,
+              localRoot: entry.localRoot,
+              startedAt: entry.startedAt,
+              lastEventAt: entry.lastEventAt,
+              lastError: entry.lastError,
+            }
+          : {}),
+        openDocs: session?.openDocCount ?? 0,
+        events: session?.recentEvents ?? [],
+      }
+    }
+
+    if (input.projectId !== undefined) {
+      const session = this.watchSessions.get(input.projectId)
+      return {
+        running: session !== undefined,
+        projectId: input.projectId,
+        ...describe(input.projectId),
+        sessions,
+      }
+    }
+
+    const first = sessions[0]
+    return {
+      running: sessions.length > 0,
+      ...(first
+        ? {
+            projectId: first.projectId,
+            projectName: first.projectName,
+            localRoot: first.localRoot,
+            startedAt: first.startedAt,
+            lastEventAt: first.lastEventAt,
+            lastError: first.lastError,
+          }
+        : {}),
+      openDocs: sessions.reduce((total, item) => total + item.openDocs, 0),
+      events: first ? (this.watchSessions.get(first.projectId)?.session.recentEvents ?? []) : [],
+      sessions,
+    }
+  }
+
+  /** Stop every session — called on plugin unload so no socket outlives it. */
+  async stopAllWatches(): Promise<void> {
+    const all = [...this.watchSessions.values()]
+    this.watchSessions.clear()
+    for (const { session, transport } of all) {
+      await session.stop('plugin unloaded').catch(() => undefined)
+      await transport.close().catch(() => undefined)
+    }
+  }
+
   /** Binary sibling of `saveConflict`: same layout, raw bytes instead of text. */
   private async saveBinaryConflict(
     link: LinkRecord,
@@ -805,20 +1137,7 @@ export class OverleafSyncService {
     remoteBytes: Uint8Array,
     meta: Record<string, unknown>,
   ): Promise<string> {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const dir = path.join(conflictsDir(link.projectId), stamp)
-    const base = path.join(dir, ...relPath.split('/'))
-    await ensureDir(path.dirname(base))
-    await atomicWriteBytes(`${base}.local`, localBytes)
-    await atomicWriteBytes(`${base}.remote`, remoteBytes)
-    await atomicWrite(`${base}.meta.json`, JSON.stringify({ path: relPath, ...meta, createdAt: new Date().toISOString() }, null, 2))
-
-    const parsed = path.posix.parse(relPath)
-    const visibleRel = path.posix.join(parsed.dir, `${parsed.name}.remote-${stamp}${parsed.ext}`)
-    const visibleAbs = path.join(link.localRoot, ...visibleRel.split('/'))
-    await ensureDir(path.dirname(visibleAbs))
-    await atomicWriteBytes(visibleAbs, remoteBytes)
-    return visibleRel
+    return writeBinaryConflict({ link, relPath, localBytes, remoteBytes, meta })
   }
 
   private async saveConflict(
@@ -828,57 +1147,10 @@ export class OverleafSyncService {
     remoteText: string,
     meta: Record<string, unknown>,
   ): Promise<string> {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const dir = path.join(conflictsDir(link.projectId), stamp)
-    const base = path.join(dir, ...relPath.split('/'))
-    await ensureDir(path.dirname(base))
-    await atomicWrite(`${base}.local`, localText)
-    await atomicWrite(`${base}.remote`, remoteText)
-    await atomicWrite(`${base}.meta.json`, JSON.stringify({ path: relPath, ...meta, createdAt: new Date().toISOString() }, null, 2))
-
     // A copy the user can actually see: `foo.remote-<stamp>.tex` next to `foo.tex`
     // (design §5.6). Repeated pulls with the same remote text reuse the copy
     // instead of filling the folder with duplicates.
-    const parsed = path.posix.parse(relPath)
-    const visibleRel = path.posix.join(parsed.dir, `${parsed.name}.remote-${stamp}${parsed.ext}`)
-    const visibleAbs = path.join(link.localRoot, ...visibleRel.split('/'))
-    const reusable = await this.findReusableConflictCopy(
-      path.dirname(visibleAbs),
-      parsed.dir,
-      parsed.name,
-      parsed.ext,
-      remoteText,
-    )
-    if (reusable) return reusable
-    await ensureDir(path.dirname(visibleAbs))
-    await atomicWrite(visibleAbs, remoteText)
-    return visibleRel
-  }
-
-  /** Look for `name.remote-*.ext` next to the file whose content already equals `remoteText`. */
-  private async findReusableConflictCopy(
-    dirAbs: string,
-    relDir: string,
-    stem: string,
-    ext: string,
-    remoteText: string,
-  ): Promise<string | undefined> {
-    let names: string[]
-    try {
-      names = await fs.readdir(dirAbs)
-    } catch {
-      return undefined
-    }
-    const wanted = sha256(normalizeEol(remoteText))
-    for (const name of names) {
-      if (!name.startsWith(`${stem}.remote-`)) continue
-      if (ext && !name.endsWith(ext)) continue
-      const text = await readTextIfExists(path.join(dirAbs, name))
-      if (text !== undefined && sha256(normalizeEol(text)) === wanted) {
-        return path.posix.join(relDir, name)
-      }
-    }
-    return undefined
+    return writeTextConflict({ link, relPath, localText, remoteText, meta })
   }
 
   private async updateGitRecord(link: LinkRecord, git: GitInitResult): Promise<void> {

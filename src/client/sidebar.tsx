@@ -21,7 +21,9 @@ import {
   type JournalEntryView,
   type PullSummary,
   type PushSummary,
+  type ResolveView,
   type StatusSummary,
+  type WatchView,
 } from './api'
 import { Hint } from './fields'
 
@@ -30,7 +32,7 @@ type PanelProps = PropsLocale<'overleaf-sync'>
 type Tone = 'ok' | 'warn' | 'error'
 type Notice = { tone: Tone; text: string }
 type Feed = 'live' | 'poll' | 'offline'
-type Busy = 'pull' | 'push' | undefined
+type Busy = 'pull' | 'push' | 'watch' | 'resolve' | undefined
 type ConfirmKind = 'pull' | 'push'
 
 /** How often the panel re-reads when the event feed is unavailable. */
@@ -120,15 +122,17 @@ export function OverleafSidebarPanel(props: PanelProps): ReactNode {
   const [notice, setNotice] = useState<Notice | null>(null)
   const [feed, setFeed] = useState<Feed>('poll')
   const [copied, setCopied] = useState(false)
+  const [watch, setWatch] = useState<WatchView | null>(null)
 
   /** Set while the component is mounted; guards late async writes after unmount. */
   const alive = useRef(true)
 
   const load = useCallback(async (): Promise<void> => {
-    const [nextStatus, nextConflicts, nextJournal] = await Promise.all([
+    const [nextStatus, nextConflicts, nextJournal, nextWatch] = await Promise.all([
       post<StatusSummary>('status'),
       post<ConflictEntry[]>('conflicts'),
       post<JournalEntryView[]>('journal', { limit: JOURNAL_LIMIT }),
+      post<WatchView>('watch', { action: 'status' }),
     ])
     if (!alive.current) return
 
@@ -143,6 +147,7 @@ export function OverleafSidebarPanel(props: PanelProps): ReactNode {
     // fails, the page keeps the last good list instead of blanking out.
     if (nextConflicts.ok) setConflicts(nextConflicts.value)
     if (nextJournal.ok) setJournal(nextJournal.value)
+    if (nextWatch.ok) setWatch(nextWatch.value)
     setLoading(false)
   }, [])
 
@@ -201,6 +206,48 @@ export function OverleafSidebarPanel(props: PanelProps): ReactNode {
       setNotice(result.ok ? pushNotice(result.value) : failureNotice(result))
       await load()
     },
+    [load],
+  )
+
+  const runWatch = useCallback(
+    async (action: 'start' | 'stop'): Promise<void> => {
+      setBusy('watch')
+      setNotice(null)
+      const result = await post<WatchView>('watch', { action })
+      if (!alive.current) return
+      setBusy(undefined)
+      if (result.ok) {
+        setWatch(result.value)
+        setNotice({ tone: 'ok', text: t(action === 'start' ? 'sbWatchStarted' : 'sbWatchStopped') })
+      } else {
+        setNotice(failureNotice(result))
+      }
+      await load()
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [load],
+  )
+
+  const runResolve = useCallback(
+    async (path: string | undefined, choice: 'keep_local' | 'keep_remote' | 'merge'): Promise<void> => {
+      setBusy('resolve')
+      setNotice(null)
+      const result = await post<ResolveView>('resolve', path === undefined ? { all: true, choice } : { path, choice })
+      if (!alive.current) return
+      setBusy(undefined)
+      if (result.ok) {
+        setNotice({
+          tone: 'ok',
+          text: result.value.resolved.length === 0
+            ? t('sbResolveNone')
+            : t('sbResolved', { count: result.value.resolved.length }),
+        })
+      } else {
+        setNotice(failureNotice(result))
+      }
+      await load()
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [load],
   )
 
@@ -313,6 +360,42 @@ export function OverleafSidebarPanel(props: PanelProps): ReactNode {
             </div>
           </div>
 
+          <div style={card}>
+            <div style={row}>
+              <strong style={{ fontSize: 12 }}>{t('sbWatchTitle')}</strong>
+              <span style={{ flex: 1 }} />
+              <span style={{ ...muted, color: watch?.running === true ? '#2f7d32' : undefined }}>
+                {t(watch?.running === true ? 'sbWatchOn' : 'sbWatchOff')}
+              </span>
+            </div>
+            <span style={muted}>{t('sbWatchHint')}</span>
+            {watch?.running !== true ? null : (
+              <div style={{ ...row, ...muted }}>
+                <span>
+                  {t('sbWatchOpenDocs')}: {watch.openDocs}
+                </span>
+                {watch.lastEventAt === undefined ? null : (
+                  <span>
+                    {t('sbJournalTitle')}: {new Date(watch.lastEventAt).toLocaleTimeString()}
+                  </span>
+                )}
+              </div>
+            )}
+            {watch?.lastError === undefined ? null : <Hint tone="error">{watch.lastError}</Hint>}
+            <div style={row}>
+              <Button
+                disabled={busy !== undefined}
+                onClick={() => {
+                  void runWatch(watch?.running === true ? 'stop' : 'start')
+                }}
+              >
+                {busy === 'watch'
+                  ? t('sbLoading')
+                  : t(watch?.running === true ? 'sbWatchStop' : 'sbWatchStart')}
+              </Button>
+            </div>
+          </div>
+
           <div style={row}>
             <Button
               disabled={busy !== undefined}
@@ -376,13 +459,44 @@ export function OverleafSidebarPanel(props: PanelProps): ReactNode {
             {conflicts.length === 0 ? (
               <span style={muted}>{t('sbConflictsEmpty')}</span>
             ) : (
-              <div style={list}>
-                {conflicts.map((entry) => (
-                  <span key={entry.copyPath} style={mono} title={entry.copyPath}>
-                    {entry.path}
-                  </span>
-                ))}
-              </div>
+              <>
+                <span style={muted}>{t('sbResolveHint')}</span>
+                <div style={list}>
+                  {conflicts.map((entry) => (
+                    <div key={entry.copyPath} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <span style={mono} title={entry.copyPath}>
+                        {entry.path}
+                      </span>
+                      <div style={row}>
+                        <Button
+                          disabled={busy !== undefined}
+                          onClick={() => {
+                            void runResolve(entry.path, 'keep_local')
+                          }}
+                        >
+                          {t('sbResolveKeepLocal')}
+                        </Button>
+                        <Button
+                          disabled={busy !== undefined}
+                          onClick={() => {
+                            void runResolve(entry.path, 'keep_remote')
+                          }}
+                        >
+                          {t('sbResolveKeepRemote')}
+                        </Button>
+                        <Button
+                          disabled={busy !== undefined}
+                          onClick={() => {
+                            void runResolve(entry.path, 'merge')
+                          }}
+                        >
+                          {t('sbResolveMerge')}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
 

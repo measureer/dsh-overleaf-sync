@@ -1270,7 +1270,7 @@ return () => { stopBody?.(); stopType?.() }   // 两段成对回滚
 | M0 调研 | 协议实测（cookie/csrf、事件名、op 格式）、Mock 服务器搭建 | 调研笔记 + Mock | 2 人日 |
 | M1 只读 | transport + `overleaf_projects/pull/status/login` + 默认目录 `~/Overleaf/<项目名>` + 拉取后 `git init` 首次提交（§5.8） | 能拉取项目并留下一份干净的本地仓库 | 3 人日 |
 | M2 双向 | ot 模块 + DocSession + push + watch | 本地改→云端可见 | 5 人日 |
-| M3 稳健 | 冲突/掉队/重连/二进制下载/状态机完善 | 验收 §15.4 | 5 人日 |
+| M3 稳健 ✅ | 冲突/掉队/重连/二进制下载/状态机完善（watch 主动模式 + `overleaf_resolve`） | 验收 §15.4 | 5 人日 |
 | M4a 设置页 | `dsh.client` 清单 + tsdown 双入口 + `settings.section` 页 + 自建 `/overleaf/api/settings.*`（§14.3） | 可在 GUI 完成登录/绑定/策略保存 | 2 人日 |
 | M4b 侧边栏 | 右侧 tab（原生两段式注册）+ 状态/动作/冲突/日志 + SSE（§14.4/14.5） | 面板与工具结果一致、断网自愈 | 3 人日 |
 | M4c 打磨 | 工具卡片（`tool.call.toolview`）、better-sidebar 可选集成、系统提示注入、配置热更新、日志审计视图 | 可发布 | 2 人日 |
@@ -1340,7 +1340,7 @@ M0 的产出里还应固化三件实现层面的“钉死项”：`HarnessError`
 
 | 设计章节 | 落地文件 | 状态 |
 | --- | --- | --- |
-| §3.2 入口 | `src/index.ts` | ✅ `name` / `inject` / `Config` / `apply`，`ctx.effect` 注册 8 个工具 |
+| §3.2 入口 | `src/index.ts` | ✅ `name` / `inject` / `Config` / `apply`，`ctx.effect` 注册 11 个工具 + 17 条 `/overleaf/api/*` 路由 + `/overleaf/events` |
 | §9 配置 | `src/config.ts`、`cordis.patch.yml` | ✅ 12 个配置键（含 `volatile()` 隐藏项） |
 | §3.3 打包 | `package.json`（`dsh.bundle.patch`）、`tsconfig.json` | ✅ `tsc` 输出 `lib/`（ESM） |
 | §5 本地目录 | `src/core/paths.ts`、`src/core/fsUtil.ts`、`src/service.ts`（`resolveLocalRoot`） | ✅ `~/Overleaf/<项目名>`，含越界校验 |
@@ -1354,13 +1354,14 @@ M0 的产出里还应固化三件实现层面的“钉死项”：`HarnessError`
 | §7.3 pull | `src/service.ts` `pull()` | ✅ 全量下载 + baseline + 自动 git init |
 | §7.3 push | `src/service.ts` `push()` | ✅ 默认 dry-run，逐文档 OT 提交，不覆盖冲突 |
 | §7.4 冲突 | `src/service.ts` `pull()` | ✅ 远端写 `*.remote-<ts>.<ext>`，本地保留 |
-| §10 工具 | `src/tools/index.ts`（`createOverleafTools`）+ `src/index.ts` 注册 | ✅ status/login/logout/projects/link/pull/push/diff |
-| §7.2 watch | — | ⏳ M3 |
-| §10 `overleaf_resolve` | — | ⏳ M3 |
+| §10 工具 | `src/tools/index.ts`（`createOverleafTools`）+ `src/index.ts` 注册 | ✅ status/login/logout/projects/link/pull/push/diff/watch/conflicts/resolve（11 个） |
+| §7.2 watch | `src/watch/session.ts`、`src/service.ts`（`watch`/`stopAllWatches`/`watchStatus`） | ✅ M3 主动模式：joinProject + 逐文档 joinDoc，远端更新落盘并刷基线、本地轮询推送；`watch.autoStart` 时启动 |
+| §7.4 冲突模型 | `src/core/conflicts.ts` | ✅ M3 冲突记录（`.local/.remote/.meta.json`）、`discoverConflicts`、`writeTextConflict`/`writeBinaryConflict`（含 `mergeText` 冲突标记） |
+| §10 `overleaf_resolve` | `src/service.ts` `resolve()` + `src/tools/index.ts` | ✅ M3 `keep_local`（推送本地覆盖远端）/`keep_remote`/`merge`，保留旧远端到 `.local` 归档、记录新基线 |
 | §14 GUI：设置页 | `src/server/*` + `src/client/*` + `locale/*` | ✅ M4a（Host API + 设置页，重启 DSH 后可见；实现说明见 [m4a-api-contract.md](m4a-api-contract.md)） |
-| §14 GUI：侧边栏 | `src/client/sidebar.tsx` + `src/server/events.ts` | ✅ M4b（原生两段式注册、SSE + 15s 轮询降级） |
+| §14 GUI：侧边栏 | `src/client/sidebar.tsx` + `src/server/events.ts` | ✅ M4b（原生两段式注册、SSE + 15s 轮询降级）；M3 增「后台同步」开关卡与逐条冲突的保留本地/采用远端/合并按钮 |
 
-测试：`test/{core,transport,service,plugin,server,client}/` 共 **189 个用例**（`node --test "test/**/*.test.mjs"`，需先 `tsc` 构建与 `pnpm run bundle`）。
+测试：`test/{core,transport,service,plugin,server,client,watch}/` 共 **198 个用例**（`node --test "test/**/*.test.mjs"`，需先 `tsc` 构建与 `pnpm run bundle`）。
 
 > 协议事实以 `src/transport/` 的实测实现为准：与附录 C 的旧描述冲突处，一律以本附录上一节（§2.2 已同步修正）为准。
 

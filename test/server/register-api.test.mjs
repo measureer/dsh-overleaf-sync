@@ -66,10 +66,12 @@ test('registers one route per API method and disposes them on unload', () => {
     '/overleaf/api/projects',
     '/overleaf/api/pull',
     '/overleaf/api/push',
+    '/overleaf/api/resolve',
     '/overleaf/api/settings.describe',
     '/overleaf/api/settings.update',
     '/overleaf/api/status',
     '/overleaf/api/validate-path',
+    '/overleaf/api/watch',
     '/overleaf/events',
   ])
   assert.ok(registered.every((route) => route.kind === 'exact'))
@@ -150,5 +152,5 @@ test('optional services are read through ctx.get, not the guarded property', () 
   }
 
   assert.doesNotThrow(() => registerOverleafApi(ctx, { service: fakeService(), config, cwd: process.cwd() }))
-  assert.equal(registered.length, 15)
+  assert.equal(registered.length, 17)
 })

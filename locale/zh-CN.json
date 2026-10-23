@@ -126,5 +126,20 @@
   "sbJournalEmpty": "暂无活动",
   "sbNothingToPush": "没有可推送的改动",
   "sbPullConfirm": "本地有 {count} 处改动尚未推送，拉取可能覆盖它们。仍要拉取？",
-  "sbPullAnyway": "仍要拉取"
+  "sbPullAnyway": "仍要拉取",
+  "sbWatchTitle": "后台同步",
+  "sbWatchOn": "运行中",
+  "sbWatchOff": "未启用",
+  "sbWatchStart": "开始后台同步",
+  "sbWatchStop": "停止后台同步",
+  "sbWatchOpenDocs": "已打开文档",
+  "sbWatchHint": "开启后保持一条连接：本地保存即推送，远端修改即落盘。同一项目同一账号只允许一个活动连接。",
+  "sbWatchStarted": "后台同步已启动",
+  "sbWatchStopped": "后台同步已停止",
+  "sbResolveKeepLocal": "保留本地",
+  "sbResolveKeepRemote": "采用远端",
+  "sbResolveMerge": "合并",
+  "sbResolveHint": "解决后会记录新的基线；选择「合并」会在文件里写入冲突标记。",
+  "sbResolved": "已解决 {count} 个冲突",
+  "sbResolveNone": "已没有未解决的冲突"
 }

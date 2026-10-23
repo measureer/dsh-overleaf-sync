@@ -4,7 +4,7 @@ DSH（DeepSeek Harness）插件：把本地 LaTeX 文件夹与 Overleaf 项目�
 
 思路参照 [measureer/overleaf-sync](https://github.com/measureer/overleaf-sync)（VS Code 插件）：不走 Git，而是复用 Overleaf 编辑器自己的协作通道（Socket.IO + OT），因此不需要付费的 Git 桥接。
 
-**当前阶段：M4b**——登录态、项目列表、绑定、拉取（自动 `git init` + 首次提交）、推送（默认 dry-run）、三方 diff、冲突不覆盖，外加 **GUI 两半**：设置页（账号/项目/目录/策略/git/watch 配置）与**右侧边栏 tab**（状态、待推送、Pull/Push、冲突、日志尾巴、SSE 实时刷新）。后台 watch 与 `resolve` 工具仍在路线图上（见[设计文档](docs/design.md) §16 里程碑）。
+**当前阶段：M3 完成**——登录态、项目列表、绑定、拉取（自动 `git init` + 首次提交）、推送（默认 dry-run）、三方 diff、冲突不覆盖、**后台双向同步（watch）**与**冲突解决（`overleaf_resolve`：保留本地 / 采用远端 / 合并）**，外加 **GUI 两半**：设置页（账号/项目/目录/策略/git/watch 配置）与**右侧边栏 tab**（状态、待推送、Pull/Push、后台同步开关、冲突逐条解决、日志尾巴、SSE 实时刷新）。下一阶段 M4c 打磨（见[设计文档](docs/design.md) §16 里程碑）。
 
 ## 安装
 
@@ -41,6 +41,9 @@ dsh plugin --profile desktop add link:C:/code/dsh-overleaf-sync
 | `overleaf_pull` | 远端 → 本地；首次成功自动建 git 仓库 | 本地文件 |
 | `overleaf_push` | 本地 → 远端（**默认 dry-run**） | 远端 |
 | `overleaf_diff` | 三方对比 local / baseline / remote，可选 unified diff | 否 |
+| `overleaf_watch` | 后台双向同步：`on`/`off`/`status`（同一项目同一账号只允许一条活动连接） | 两端 |
+| `overleaf_conflicts` | 列出未解决的冲突条目（含 `.local`/`.remote` 副本位置） | 否 |
+| `overleaf_resolve` | 解决冲突：`keep_local` / `keep_remote` / `merge`（可 `all: true`） | 两端 |
 
 ## 默认行为
 
@@ -50,7 +53,7 @@ dsh plugin --profile desktop add link:C:/code/dsh-overleaf-sync
 | 拉取后建 Git 仓库 | **是**（已在上层仓库内则复用，不嵌套） | `git.autoInit` |
 | 写远端 | 工具默认 dry-run，必须显式 `dryRun: false` | — |
 | 冲突 | **永不静默覆盖**：本地保留，远端写 `foo.remote-<ts>.tex` | `defaultStrategy` |
-| 后台 watch | **关**（未实现，M3） | `watch.autoStart` |
+| 后台 watch | **关**（可随时在侧边栏或 `overleaf_watch` 开启；`autoStart` 为真时插件加载即启动） | `watch.autoStart` |
 
 ## 自建服务器（Overleaf CE / Server Pro）
 
@@ -83,7 +86,7 @@ npm test           # node --test "test/**/*.test.mjs"（189 个：transport / co
 浏览器半侧（`lib/client.js`）是**薄壳**——所有文件与网络操作仍在 Node 半侧，客户端只渲染与触发：
 
 - **设置页**（Settings → Overleaf 同步）：粘贴 Cookie/CSRF（只写凭据中心、不回显）、选项目、校验并绑定本地目录、冲突策略与 git/watch 开关；显式「保存修改」，写回 profile 配置条目，409 冲突不覆盖。
-- **右侧边栏 tab**（Overleaf 同步）：项目名与文件数、待推送、冲突数；拉取（本地有改动会二次确认）与推送（预演 / 真实推送，真实推送要确认）；本地目录路径一键复制；冲突副本列表与最近活动（journal 尾巴）。数据来自 `/overleaf/api/*`，并用 `GET /overleaf/events`（SSE）实时失效重拉，断流自动降级为 15s 轮询。
+- **右侧边栏 tab**（Overleaf 同步）：项目名与文件数、待推送、冲突数；**后台同步开关卡**（运行中/未启用、已打开文档数、最近事件时间、错误提示）；拉取（本地有改动会二次确认）与推送（预演 / 真实推送，真实推送要确认）；本地目录路径一键复制；**冲突逐条解决**（保留本地 / 采用远端 / 合并）；最近活动（journal 尾巴）。数据来自 `/overleaf/api/*`，并用 `GET /overleaf/events`（SSE）实时失效重拉，断流自动降级为 15s 轮询。
 
 Host 半侧注册 `/overleaf/api/*`（`status`、`login`、`logout`、`projects`、`validate-path`、`link`、`pull`、
 `push`、`diff`、`conflicts`、`journal`、`settings.describe`、`settings.update`）与 `GET /overleaf/events`，

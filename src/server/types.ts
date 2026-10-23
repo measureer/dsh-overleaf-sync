@@ -33,6 +33,34 @@ export interface ConflictEntry {
   copyPath: string
   at: string
   strategy: ConflictStrategy
+  /** why it was recorded, e.g. `remote-changed` */
+  reason?: string
+  kind?: 'doc' | 'file'
+}
+
+/** `POST /overleaf/api/watch` — background sync state for the GUI. */
+export interface WatchView {
+  running: boolean
+  projectId?: string
+  projectName?: string
+  localRoot?: string
+  openDocs: number
+  startedAt?: string
+  lastEventAt?: string
+  lastError?: string
+  events: Array<{
+    at: string
+    type: string
+    path?: string
+    detail?: string
+    version?: number
+  }>
+}
+
+/** `POST /overleaf/api/resolve` — what a conflict resolution changed. */
+export interface ResolveView {
+  choice: string
+  resolved: Array<{ path: string; kind: string; remoteVersion: number; archivedTo?: string }>
 }
 
 export type FieldType = 'string' | 'boolean' | 'number' | 'enum'

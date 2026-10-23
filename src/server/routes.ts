@@ -31,7 +31,15 @@ import {
   sendResult,
 } from './envelope.js'
 import type { SettingsBridge } from './settingsBridge.js'
-import type { ConflictEntry, JournalEntryView, PathValidation, PickDirectoryResult, StatusSummary } from './types.js'
+import type {
+  ConflictEntry,
+  JournalEntryView,
+  PathValidation,
+  PickDirectoryResult,
+  ResolveView,
+  StatusSummary,
+  WatchView,
+} from './types.js'
 
 /** Structural copy of the web server's route record. */
 export interface WebRoute {
@@ -75,6 +83,8 @@ export function createOverleafRoutes(deps: RouteDeps): WebRoute[] {
     ['push', (body) => pushView(deps, body)],
     ['diff', (body) => diffView(deps, body)],
     ['conflicts', (body) => conflictsView(deps, body)],
+    ['resolve', (body) => resolveView(deps, body)],
+    ['watch', (body) => watchView(deps, body)],
     ['journal', (body) => journalView(deps, body)],
     ['settings.describe', async () => deps.settings.describeView()],
     ['settings.update', (body) => settingsUpdateView(deps, body)],
@@ -411,33 +421,91 @@ async function conflictsView(deps: RouteDeps, body: Record<string, unknown>): Pr
 }
 
 async function listConflicts(
-  _deps: RouteDeps,
+  deps: RouteDeps,
   projectId: string,
   strategy: ConflictStrategy,
 ): Promise<ConflictEntry[]> {
-  const dir = conflictsDir(projectId)
-  let names: string[]
-  try {
-    names = await fs.readdir(dir)
-  } catch {
-    return []
+  // The source of truth is the artifact directory (`conflicts/<stamp>/…`), which
+  // `discoverConflicts` understands; the old directory-name regex guessed paths
+  // from stamp folder names and reported files that never existed.
+  const summary = await deps.service.conflicts({ projectId })
+  return summary.conflicts.map((entry) => ({
+    path: entry.path,
+    copyPath: entry.copyPath ?? entry.path,
+    at: entry.createdAt,
+    strategy,
+    ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
+    ...(entry.kind !== undefined ? { kind: entry.kind } : {}),
+  }))
+}
+
+async function resolveView(deps: RouteDeps, body: Record<string, unknown>): Promise<ResolveView> {
+  const current = await currentProject(deps)
+  if (current === undefined) {
+    throw new ApiError('E_NOT_LINKED', 'no project is linked yet', 400)
   }
-  const entries: ConflictEntry[] = []
-  for (const name of names) {
-    const full = path.join(dir, name)
-    let at = new Date(0).toISOString()
-    try {
-      at = (await fs.stat(full)).mtime.toISOString()
-    } catch {
-      // keep epoch; the file may vanish between readdir and stat
-    }
-    // `<relPath>.remote-<ts><ext>` — the copy lives in conflicts/, the main file in the project.
-    const match = /^(.*)\.remote-[^.]+(\.[^.]+)?$/.exec(name)
-    const mainPath = match === null ? name : `${match[1]}${match[2] ?? ''}`
-    entries.push({ path: mainPath, copyPath: name, at, strategy })
+  const path = optionalString(body, 'path')
+  const all = optionalBoolean(body, 'all') === true
+  if (!path && !all) {
+    throw new ApiError('E_VALIDATION', 'pass `path` or `all: true`', 400)
   }
-  entries.sort((a, b) => b.at.localeCompare(a.at))
-  return entries
+  const rawChoice = optionalString(body, 'choice') ?? 'keep_local'
+  const choice =
+    rawChoice === 'keep_remote' || rawChoice === 'merge' || rawChoice === 'keep_local'
+      ? rawChoice
+      : undefined
+  if (choice === undefined) {
+    throw new ApiError('E_VALIDATION', 'choice must be keep_local, keep_remote or merge', 400)
+  }
+  const summary = await deps.service.resolve(
+    {
+      projectId: current.projectId,
+      ...(path ? { path } : {}),
+      ...(all ? { all } : {}),
+      choice,
+    },
+    { cwd: deps.cwd },
+  )
+  const view: ResolveView = {
+    choice: summary.choice,
+    resolved: summary.resolved.map((entry) => ({
+      path: entry.path,
+      kind: entry.kind,
+      remoteVersion: entry.remoteVersion,
+      ...(entry.archivedTo !== undefined ? { archivedTo: entry.archivedTo } : {}),
+    })),
+  }
+  return view
+}
+
+async function watchView(deps: RouteDeps, body: Record<string, unknown>): Promise<WatchView> {
+  const raw = optionalString(body, 'action') ?? 'status'
+  if (raw !== 'start' && raw !== 'stop' && raw !== 'status') {
+    throw new ApiError('E_VALIDATION', 'action must be start, stop or status', 400)
+  }
+  const current = await currentProject(deps)
+  if (raw !== 'status' && current === undefined) {
+    throw new ApiError('E_NOT_LINKED', 'link a project before starting background sync', 400)
+  }
+  const status = await deps.service.watch(
+    {
+      action: raw,
+      ...(current !== undefined ? { projectId: current.projectId } : {}),
+    },
+    { cwd: deps.cwd },
+  )
+  const view: WatchView = {
+    running: status.running,
+    ...(status.projectId !== undefined ? { projectId: status.projectId } : {}),
+    ...(status.projectName !== undefined ? { projectName: status.projectName } : {}),
+    ...(status.localRoot !== undefined ? { localRoot: status.localRoot } : {}),
+    openDocs: status.openDocs,
+    ...(status.startedAt !== undefined ? { startedAt: status.startedAt } : {}),
+    ...(status.lastEventAt !== undefined ? { lastEventAt: status.lastEventAt } : {}),
+    ...(status.lastError !== undefined ? { lastError: status.lastError } : {}),
+    events: status.events.slice(-20),
+  }
+  return view
 }
 
 async function journalView(deps: RouteDeps, body: Record<string, unknown>): Promise<JournalEntryView[]> {

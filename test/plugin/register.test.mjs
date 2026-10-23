@@ -50,6 +50,7 @@ test('apply() registers every overleaf_* tool and disposes them cleanly', () => 
   plugin.apply(ctx, {})
 
   assert.deepEqual(registered.map((tool) => tool.name).sort(), [
+    'overleaf_conflicts',
     'overleaf_diff',
     'overleaf_link',
     'overleaf_login',
@@ -57,7 +58,9 @@ test('apply() registers every overleaf_* tool and disposes them cleanly', () => 
     'overleaf_projects',
     'overleaf_pull',
     'overleaf_push',
+    'overleaf_resolve',
     'overleaf_status',
+    'overleaf_watch',
   ])
   for (const tool of registered) {
     assert.equal(typeof tool.description, 'string')

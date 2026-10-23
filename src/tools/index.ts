@@ -1,5 +1,5 @@
 /**
- * The agent-facing surface: five tools, all thin wrappers over
+ * The agent-facing surface: narrow tools, all thin wrappers over
  * {@link OverleafSyncService}. Every tool returns `{ text, ...data }` so the
  * model always gets a readable summary plus structured fields to branch on.
  */
@@ -9,7 +9,15 @@ import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 
 import type { Config } from '../config.js'
 import { describeError, isOverleafError, OverleafSyncError } from '../core/errors.js'
-import { OverleafSyncService, type PullSummary, type PushSummary, type ServiceContext } from '../service.js'
+import {
+  OverleafSyncService,
+  type ConflictsSummary,
+  type PullSummary,
+  type PushSummary,
+  type ResolveSummary,
+  type ServiceContext,
+  type WatchStatus,
+} from '../service.js'
 
 /** Output schema shared by every tool: a human summary plus free-form fields. */
 const summaryOutput = {
@@ -306,7 +314,98 @@ export function createOverleafTools(service: OverleafSyncService, config: Config
     },
   })
 
-  return [status, login, logout, projects, link, pull, push, diff]
+  const conflictsTool = defineTool({
+    name: 'overleaf_conflicts',
+    description:
+      'List unresolved sync conflicts: files where the local copy and Overleaf both changed, so one side ' +
+      'was kept and the other saved next to it. Shows the suggested command to settle each one.',
+    parameters: {
+      projectId: { type: 'string', description: 'Defaults to the only linked project.' },
+    },
+    output: { schema: summaryOutput, render: renderText },
+    execute: async (args, exec) => {
+      try {
+        const summary = await service.conflicts(
+          { ...(args.projectId ? { projectId: args.projectId } : {}) },
+          contextOf(exec, cwd),
+        )
+        return asJson({ text: describeConflicts(summary), conflicts: summary.conflicts })
+      } catch (error) {
+        failure(error)
+      }
+    },
+  })
+
+  const resolveTool = defineTool({
+    name: 'overleaf_resolve',
+    description:
+      'Settle a sync conflict. `keep_local` keeps your file (the next push sends it), `keep_remote` ' +
+      'overwrites it with the Overleaf copy, `merge` keeps both and only clears the conflict record. ' +
+      'Both sides stay archived under the plugin state directory, so nothing is lost.',
+    parameters: {
+      path: { type: 'string', description: 'Project-relative path (or file name) of the conflicted file.' },
+      projectId: { type: 'string', description: 'Defaults to the only linked project.' },
+      choice: {
+        type: 'string',
+        enum: ['keep_local', 'keep_remote', 'merge'],
+        description: 'How to settle it. Defaults to `keep_local`.',
+      },
+      all: { type: 'boolean', description: 'Settle every open conflict instead of a single path.' },
+      dryRun: { type: 'boolean', description: 'Report what would change without touching files.' },
+    },
+    output: { schema: summaryOutput, render: renderText },
+    execute: async (args, exec) => {
+      try {
+        const summary = await service.resolve(
+          {
+            ...(args.projectId ? { projectId: args.projectId } : {}),
+            ...(args.path ? { path: args.path } : {}),
+            ...(args.all === undefined ? {} : { all: args.all }),
+            ...(args.choice ? { choice: args.choice as ResolveSummary['choice'] } : {}),
+            ...(args.dryRun === undefined ? {} : { dryRun: args.dryRun }),
+          },
+          contextOf(exec, cwd),
+        )
+        return asJson({ text: describeResolve(summary), resolve: summary })
+      } catch (error) {
+        failure(error)
+      }
+    },
+  })
+
+  const watchTool = defineTool({
+    name: 'overleaf_watch',
+    description:
+      'Start or stop the background two-way sync: local edits to linked documents are pushed to Overleaf ' +
+      'within a second, and Overleaf edits are written back to disk. Off by default — while it runs it ' +
+      'holds one socket open, and a server that only allows one live session per project may reject it.',
+    parameters: {
+      action: {
+        type: 'string',
+        enum: ['start', 'stop', 'status'],
+        required: true,
+        description: '`start` begins watching, `stop` ends it, `status` reports recent activity.',
+      },
+      projectId: { type: 'string', description: 'Defaults to the only linked project.' },
+    },
+    output: { schema: summaryOutput, render: renderText },
+    execute: async (args, exec) => {
+      try {
+        const summary = await service.watch(
+          {
+            action: args.action as 'start' | 'stop' | 'status',
+            ...(args.projectId ? { projectId: args.projectId } : {}),
+          },
+          contextOf(exec, cwd),
+        )
+        return asJson({ text: describeWatch(summary), watch: summary })
+      } catch (error) {
+        failure(error)
+      }
+    },
+  })
+
+  return [status, login, logout, projects, link, pull, push, diff, conflictsTool, resolveTool, watchTool]
 }
 
 
@@ -349,5 +448,85 @@ export function describePull(summary: PullSummary, config: Config): string {
   }
   if (summary.warnings.length > 0) lines.push(`warnings: ${summary.warnings.join('; ')}`)
   if (summary.dryRun) lines.push(`(dry run: nothing was written; config git.autoInit=${String(config.git.autoInit)})`)
+  return lines.join('\n')
+}
+
+export function describeConflicts(summary: ConflictsSummary): string {
+  const { conflicts } = summary
+  if (conflicts.length === 0) {
+    return `No unresolved conflicts in "${summary.projectName}" → ${summary.localRoot}.`
+  }
+  const lines = [`Unresolved conflicts: ${conflicts.length} in "${summary.projectName}" → ${summary.localRoot}`]
+  conflicts.slice(0, 10).forEach((entry, index) => {
+    const versions =
+      entry.localVersion !== undefined || entry.remoteVersion !== undefined
+        ? ` (local v${entry.localVersion ?? '?'}, remote v${entry.remoteVersion ?? '?'})`
+        : ''
+    lines.push(`${index + 1}. ${entry.path} — ${entry.reason ?? 'both changed'}${versions}, ${entry.createdAt}`)
+    if (entry.copyPath) lines.push(`   remote copy: ${entry.copyPath}`)
+    lines.push(`   settle: overleaf_resolve path="${entry.path}" choice=keep_local|keep_remote|merge`)
+  })
+  if (conflicts.length > 10) lines.push(`… (+${conflicts.length - 10} more)`)
+  return lines.join('\n')
+}
+
+export function describeResolve(summary: ResolveSummary): string {
+  const head = summary.dryRun ? 'Dry run: ' : ''
+  if (summary.resolved.length === 0) {
+    return `${head}No conflict settled (nothing matched).`
+  }
+  const verb =
+    summary.choice === 'keep_remote'
+      ? 'kept the Overleaf copy'
+      : summary.choice === 'merge'
+        ? 'kept both sides'
+        : 'kept the local copy'
+  const lines = [
+    `${head}Settled ${summary.resolved.length} conflict(s) in "${summary.projectName}" (${verb})`,
+  ]
+  summary.resolved.slice(0, 10).forEach((entry) => {
+    const archive = entry.archivedTo ? ` · archived: ${entry.archivedTo}` : ''
+    lines.push(`- ${entry.path} (${entry.kind}, remote v${entry.remoteVersion})${archive}`)
+  })
+  if (summary.resolved.length > 10) lines.push(`… (+${summary.resolved.length - 10} more)`)
+  if (summary.choice === 'keep_local' && !summary.dryRun) {
+    lines.push('Next: overleaf_push dryRun:false to send the kept local copy (still three-way checked).')
+  }
+  if (summary.choice === 'keep_remote' && !summary.dryRun) {
+    lines.push('The local file now matches Overleaf; nothing to push.')
+  }
+  if (summary.choice === 'merge' && !summary.dryRun) {
+    lines.push('Both versions are on disk — edit the file into what you want, then overleaf_push.')
+  }
+  return lines.join('\n')
+}
+
+export function describeWatch(summary: WatchStatus): string {
+  if (!summary.running) {
+    const lines = ['Background sync: not running']
+    if (summary.projectId && summary.projectName) {
+      lines.push(`last state for "${summary.projectName}": stopped`)
+    }
+    lines.push('start it with overleaf_watch action="start" (holds one socket open while it runs)')
+    return lines.join('\n')
+  }
+  const lines = [
+    `Background sync: running — ${summary.sessions.length} project(s), ${summary.openDocs} document(s) open`,
+  ]
+  for (const session of summary.sessions) {
+    lines.push(
+      `- ${session.projectName} → ${session.localRoot} · open docs ${session.openDocs}` +
+        (session.startedAt ? ` · since ${session.startedAt}` : '') +
+        (session.lastError ? ` · last error: ${session.lastError}` : ''),
+    )
+  }
+  if (summary.events.length > 0) {
+    lines.push('recent activity:')
+    for (const event of summary.events.slice(-5)) {
+      lines.push(`- ${event.at} ${event.type}${event.path ? ` ${event.path}` : ''}${event.detail ? ` — ${event.detail}` : ''}`)
+    }
+  } else {
+    lines.push('recent activity: none yet — edit a linked file to see it move')
+  }
   return lines.join('\n')
 }

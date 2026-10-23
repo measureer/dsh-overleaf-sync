@@ -174,6 +174,28 @@ export interface ConflictEntry {
   copyPath: string
   at: string
   strategy: string
+  /** why it was recorded, e.g. `both-changed` or `remote-changed` */
+  reason?: string
+  kind?: 'doc' | 'file'
+}
+
+/** `watch` → background sync state for the sidebar card (mirrors `WatchView`). */
+export interface WatchView {
+  running: boolean
+  projectId?: string
+  projectName?: string
+  localRoot?: string
+  openDocs: number
+  startedAt?: string
+  lastEventAt?: string
+  lastError?: string
+  events: Array<{ at: string; type: string; path?: string; detail?: string; version?: number }>
+}
+
+/** `resolve` → what a conflict resolution changed (mirrors `ResolveView`). */
+export interface ResolveView {
+  choice: string
+  resolved: Array<{ path: string; kind: string; remoteVersion: number; archivedTo?: string }>
 }
 
 /** `journal` → one line of the per-project append-only log (mirrors `JournalEntryView`). */
